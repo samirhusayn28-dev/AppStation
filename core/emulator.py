@@ -5,21 +5,39 @@ import subprocess
 import time
 import threading
 from pathlib import Path
-from typing import Optional, Callable, List, Tuple
+from typing import Optional, Callable, List, Tuple, Dict
 from .platform_utils import PlatformUtils
 from .hardware_profile import HardwareProfiler, PerformanceMode, EmulatorConfig
 from .settings import settings
 
 
 class EmulatorManager:
-    """Manages the Android emulator lifecycle."""
-    
+    """Manages the Android emulator lifecycle.
+
+    Performance features:
+
+    * host-matching ABI is enforced by :class:`SDKManager`; the emulator only
+      starts AVDs whose image matches the host CPU;
+    * quickboot: a ``default_boot`` snapshot is saved after the first boot and
+      loaded on later starts (falling back to a cold boot if it is invalid);
+    * ``-accel on`` when HVF/WHPX/AEHD/KVM is available;
+    * ``-no-audio``, ``-no-boot-anim``, ``-netfast``, cameras off, fixed
+      cores/RAM and a small data partition;
+    * ``-gpu host`` with an automatic ``swiftshader_indirect`` fallback;
+    * real boot stages reported through :meth:`set_progress_callback`;
+    * guest animations disabled via adb after boot.
+    """
+
+    BOOT_SNAPSHOT = "default_boot"
+
     def __init__(self):
         self._process: Optional[subprocess.Popen] = None
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_monitor = threading.Event()
         self._output_callback: Optional[Callable[[str], None]] = None
         self._boot_callback: Optional[Callable[[bool], None]] = None
+        self._progress_callback: Optional[Callable[[int, str], None]] = None
+        self._serial: Optional[str] = None
 
     @property
     def avd_name(self) -> str:
@@ -30,87 +48,190 @@ class EmulatorManager:
         the manager.
         """
         return settings.avd_name
-    
+
     def set_output_callback(self, callback: Callable[[str], None]):
         """Set callback for emulator output lines."""
         self._output_callback = callback
-    
+
     def set_boot_callback(self, callback: Callable[[bool], None]):
         """Set callback for boot completion (success/failure)."""
         self._boot_callback = callback
-    
+
+    def set_progress_callback(self, callback: Callable[[int, str], None]):
+        """Set callback for real boot progress: ``callback(percent, stage)``."""
+        self._progress_callback = callback
+
+    def _progress(self, percent: int, message: str):
+        if self._progress_callback:
+            try:
+                self._progress_callback(max(0, min(100, int(percent))), message)
+            except Exception:
+                pass
+
     def _log(self, message: str):
         """Log message via callback."""
         if self._output_callback:
             self._output_callback(message)
-    
+
     def is_running(self) -> bool:
         """Check if emulator process is running."""
         if self._process is None:
             return False
         return self._process.poll() is None
-    
+
     def get_pid(self) -> Optional[int]:
         """Get emulator process PID."""
         if self._process:
             return self._process.pid
         return None
-    
-    def build_start_command(self, mode: PerformanceMode, force_window: bool = False,
-                            no_window: bool = False) -> List[str]:
+
+    # -- AVD / snapshot helpers -----------------------------------------
+
+    def _avd_dirs(self) -> List[Path]:
+        return [
+            PlatformUtils.get_app_data_dir() / "avd",
+            Path.home() / ".android" / "avd",
+        ]
+
+    def _avd_dir(self, name: Optional[str] = None) -> Optional[Path]:
+        name = name or self.avd_name
+        if not name:
+            return None
+        for base in self._avd_dirs():
+            candidate = base / f"{name}.avd"
+            if candidate.is_dir():
+                return candidate
+        return None
+
+    def has_snapshot(self, name: str = BOOT_SNAPSHOT) -> bool:
+        """True when the AVD has a quickboot snapshot on disk."""
+        avd = self._avd_dir()
+        if avd is None:
+            return False
+        snap = avd / "snapshots" / name
+        try:
+            return snap.is_dir() and any(snap.iterdir())
+        except OSError:
+            return False
+
+    def _delete_snapshot_files(self, name: str = BOOT_SNAPSHOT) -> None:
+        """Remove a possibly-corrupt snapshot without starting the emulator."""
+        avd = self._avd_dir()
+        if avd is None:
+            return
+        import shutil
+        try:
+            shutil.rmtree(avd / "snapshots" / name, ignore_errors=True)
+        except Exception:
+            pass
+
+    # -- command building -----------------------------------------------
+
+    def build_start_command(self, mode: PerformanceMode,
+                            force_window: bool = False,
+                            no_window: bool = False,
+                            use_snapshot: bool = True,
+                            snapshot_name: str = BOOT_SNAPSHOT,
+                            gpu_override: Optional[str] = None,
+                            low_power: Optional[bool] = None) -> List[str]:
         """Build the emulator start command based on mode.
 
         ``no_window`` forces ``-no-window`` even when ``force_window`` or the
         config would otherwise request a window.  That is used by the embedded
-        screen (Stage 2a): the app renders the device itself, so the emulator
-        must not open its own window.
+        screen: the app renders the device itself, so the emulator must not
+        open its own window.
+
+        ``use_snapshot`` asks for a quickboot start; it is honoured only when
+        the snapshot actually exists.  ``gpu_override`` is used by the
+        ``-gpu host`` -> ``swiftshader_indirect`` fallback.
         """
         emulator_path = PlatformUtils.get_emulator_path()
         profiler = HardwareProfiler()
-        config = profiler.get_emulator_config(mode)
-        
-        cmd = [str(emulator_path)]
+        if low_power is None:
+            low_power = settings.low_power_mode
+        config = profiler.get_emulator_config(mode, low_power=low_power)
+        gpu_mode = gpu_override or config.gpu_mode
+
+        warm = bool(use_snapshot and settings.quickboot
+                    and self.has_snapshot(snapshot_name))
+
+        cmd: List[str] = [str(emulator_path)]
         cmd.extend(["-avd", self.avd_name])
         cmd.extend(["-memory", str(config.memory_mb)])
         cmd.extend(["-cores", str(config.cores)])
-        cmd.extend(["-gpu", config.gpu_mode])
-        
+        cmd.extend(["-gpu", gpu_mode])
+
+        accel = PlatformUtils.get_acceleration_info()
+        if accel.get("supported"):
+            # Explicit: fail fast instead of silently running the CPU in
+            # software if the host accelerator is missing.
+            cmd.extend(["-accel", "on"])
+
         if config.no_audio:
             cmd.append("-no-audio")
         if config.no_boot_anim:
             cmd.append("-no-boot-anim")
-        if config.no_snapshot_save:
-            cmd.append("-no-snapshot-save")
-        
+        cmd.append("-netfast")
+
         # Use window if scrcpy not available (force_window) or config says so,
         # unless the caller explicitly asks for a headless (no-window) start.
         use_window = (force_window or not config.no_window) and not no_window
         if not use_window:
             cmd.append("-no-window")
-        
+
         # Screen size and density
         cmd.extend(["-skin", f"{config.screen_width}x{config.screen_height}"])
         cmd.extend(["-dpi-device", str(config.density)])
-        
+
         # Additional args
         cmd.extend(config.extra_args)
-        
-        # Useful flags for all modes
-        cmd.extend([
-            "-no-snapshot-load",  # Don't auto-load snapshot (we handle manually)
-            "-no-snapshot-save",  # Don't auto-save on exit
-            "-camera-back", "virtualscene",  # Virtual camera for testing
-        ])
-        
-        # Filter empty strings
-        cmd = [c for c in cmd if c]
-        
-        return cmd
-    
-    def start(self, mode: PerformanceMode, wait_for_boot: bool = True, 
-              timeout: int = 120, scrcpy_available: bool = True,
+
+        if warm:
+            # Load the saved snapshot and keep it intact (do not overwrite it
+            # with whatever state the user leaves behind on exit).
+            cmd.extend(["-snapshot", snapshot_name, "-no-snapshot-save"])
+        else:
+            # Cold boot: no snapshot load, no implicit save.  A fresh
+            # snapshot is saved explicitly after boot succeeds.
+            cmd.extend(["-no-snapshot-load", "-no-snapshot-save"])
+
+        # Cameras are not needed for APK testing; turning them off saves CPU
+        # and avoids virtual-scene rendering work.
+        cmd.extend(["-camera-back", "none", "-camera-front", "none"])
+
+        # Filter empty strings and duplicate flags with identical values.
+        clean: List[str] = []
+        for item in cmd:
+            if item:
+                clean.append(item)
+        return clean
+
+    # -- lifecycle -------------------------------------------------------
+
+    def _start_once(self, cmd: List[str], wait_for_boot: bool,
+                    timeout: int) -> Tuple[bool, str]:
+        try:
+            self._process = PlatformUtils.start_detached_process(cmd)
+            self._serial = None
+            if wait_for_boot:
+                return self._wait_for_boot(timeout)
+            return True, "Emulator started"
+        except Exception as e:
+            return False, f"Failed to start emulator: {e}"
+
+    def _stop_process(self) -> None:
+        if self._process is not None:
+            try:
+                PlatformUtils.kill_process_tree(self._process.pid)
+            except Exception:
+                pass
+        self._process = None
+        self._serial = None
+
+    def start(self, mode: PerformanceMode, wait_for_boot: bool = True,
+              timeout: int = 180, scrcpy_available: bool = True,
               no_window: bool = False, open_window: bool = False) -> Tuple[bool, str]:
-        """Start the emulator.
+        """Start the emulator, preferring a quickboot snapshot when present.
 
         ``no_window=True`` forces a headless start (embedded screen).  Pass
         ``open_window=True`` to always open the emulator's own window - used by
@@ -124,177 +245,246 @@ class EmulatorManager:
         if not self.avd_name:
             return False, "No Android version selected - choose one in Controls > Android version"
 
-        # Ensure adb server is running
         self._ensure_adb_server()
-        
-        # Force a window when scrcpy is missing (old behaviour) or when the
-        # caller explicitly wants the native emulator window.
+        self._serial = None
         force_window = (not scrcpy_available) or open_window
-        cmd = self.build_start_command(mode, force_window=force_window,
-                                       no_window=no_window)
+
+        use_snapshot = bool(settings.quickboot and self.has_snapshot())
+        cmd = self.build_start_command(
+            mode, force_window=force_window, no_window=no_window,
+            use_snapshot=use_snapshot)
         self._log(f"Starting emulator: {' '.join(cmd)}")
-        
-        try:
-            self._process = PlatformUtils.start_detached_process(cmd)
-            
-            if wait_for_boot:
-                return self._wait_for_boot(timeout)
-            
-            return True, "Emulator started"
-            
-        except Exception as e:
-            return False, f"Failed to start emulator: {e}"
-    
+        self._progress(0, "Starting emulator process")
+        ok, message = self._start_once(cmd, wait_for_boot, timeout)
+
+        if not ok and use_snapshot:
+            # A stale/incompatible snapshot must never leave the app stuck.
+            self._log("Quickboot snapshot failed; falling back to a cold boot")
+            self._progress(0, "Quickboot failed - cold booting")
+            self._stop_process()
+            self._delete_snapshot_files()
+            cmd = self.build_start_command(
+                mode, force_window=force_window, no_window=no_window,
+                use_snapshot=False)
+            self._log(f"Retrying cold: {' '.join(cmd)}")
+            ok, message = self._start_once(cmd, wait_for_boot, timeout)
+
+        if not ok and self._gpu_override_needed(mode, force_window=no_window):
+            # The default profile asked for host GPU but the emulator could
+            # not boot.  Retry with software rendering before giving up.
+            self._log("GPU 'host' failed; retrying with swiftshader_indirect")
+            self._progress(0, "Retrying with software GPU")
+            self._stop_process()
+            cmd = self.build_start_command(
+                mode, force_window=force_window, no_window=no_window,
+                use_snapshot=False, gpu_override="swiftshader_indirect")
+            self._log(f"Retrying with software GPU: {' '.join(cmd)}")
+            ok, message = self._start_once(cmd, wait_for_boot, timeout)
+            if ok:
+                message = f"{message} (software GPU fallback)"
+
+        if ok and wait_for_boot and settings.quickboot and not self.has_snapshot():
+            self._progress(95, "Saving quickboot snapshot")
+            saved, save_message = self.save_snapshot(self.BOOT_SNAPSHOT)
+            self._log(f"Quickboot snapshot: {save_message}")
+            if saved:
+                self._progress(100, "Emulator ready")
+
+        return ok, message
+
+    def _gpu_override_needed(self, mode: PerformanceMode,
+                              no_window: bool = False) -> bool:
+        """Return True if the default command would use host GPU and fallback
+        is desired.  Simple heuristic: if the config's gpu_mode is host then
+        a software retry should be offered."""
+        from .hardware_profile import HardwareProfiler
+        profiler = HardwareProfiler()
+        config = profiler.get_emulator_config(mode, low_power=False)
+        return config.gpu_mode == "host"
+
     def _ensure_adb_server(self):
         """Ensure adb server is running."""
         adb = PlatformUtils.get_adb_path()
         if adb.exists():
             PlatformUtils.run_command([str(adb), "start-server"], timeout=10)
-    
-    def _wait_for_boot(self, timeout: int) -> Tuple[bool, str]:
-        """Wait for emulator to finish booting."""
+
+    def _detect_serial(self) -> Optional[str]:
+        """Find the emulator serial via adb (the app runs one at a time)."""
         adb = PlatformUtils.get_adb_path()
+        try:
+            result = PlatformUtils.run_command(
+                [str(adb), "devices"], timeout=10)
+        except Exception:
+            return None
+        for line in (result.stdout or "").splitlines():
+            parts = line.split()
+            if parts and parts[0].startswith("emulator-"):
+                return parts[0]
+        return None
+
+    def _adb_args(self, args: List[str]) -> List[str]:
+        adb = PlatformUtils.get_adb_path()
+        prefix = [str(adb)]
+        if self._serial:
+            prefix.extend(["-s", self._serial])
+        return prefix + list(args)
+
+    def _run_adb(self, args: List[str], timeout: int = 10):
+        try:
+            return PlatformUtils.run_command(
+                self._adb_args(args), timeout=timeout)
+        except Exception:
+            return None
+
+    def _disable_guest_animations(self) -> None:
+        """Turn off Android's window/transition/animator animations."""
+        for key in ("window_animation_scale",
+                    "transition_animation_scale",
+                    "animator_duration_scale"):
+            self._run_adb(["shell", "settings", "put", "global", key, "0"],
+                          timeout=10)
+        self._log("Guest animations disabled")
+
+    def _wait_for_boot(self, timeout: int) -> Tuple[bool, str]:
+        """Wait for emulator boot, reporting real stage progress."""
         start_time = time.time()
-        
         self._log("Waiting for emulator to boot...")
-        
+        last_stage = -1
+
         while time.time() - start_time < timeout:
             if not self.is_running():
                 return False, "Emulator process died during boot"
-            
-            try:
-                result = PlatformUtils.run_command(
-                    [str(adb), "shell", "getprop", "sys.boot_completed"],
-                    timeout=10
-                )
-                if result.returncode == 0 and result.stdout.strip() == "1":
-                    self._log("Emulator booted successfully")
-                    if self._boot_callback:
-                        self._boot_callback(True)
-                    return True, "Emulator ready"
-            except Exception:
-                pass
-            
-            time.sleep(2)
-        
+
+            if not self._serial:
+                self._serial = self._detect_serial()
+            if not self._serial:
+                if last_stage != 10:
+                    self._progress(10, "Waiting for ADB device")
+                    last_stage = 10
+                time.sleep(1)
+                continue
+
+            result = self._run_adb(
+                ["shell", "getprop", "sys.boot_completed"], timeout=10)
+            if (result is not None and result.returncode == 0
+                    and (result.stdout or "").strip() == "1"):
+                self._progress(100, "Emulator ready")
+                self._disable_guest_animations()
+                self._log("Emulator booted successfully")
+                if self._boot_callback:
+                    self._boot_callback(True)
+                return True, "Emulator ready"
+
+            anim = self._run_adb(
+                ["shell", "getprop", "init.svc.bootanim"], timeout=10)
+            anim_state = (anim.stdout or "").strip() if anim is not None else ""
+            if anim_state == "stopped":
+                percent, stage = 85, "Android system starting"
+            elif anim_state == "running":
+                percent, stage = 55, "Android boot animation"
+            else:
+                percent, stage = 25, "Waiting for Android"
+            if percent != last_stage:
+                self._progress(percent, stage)
+                last_stage = percent
+
+            time.sleep(1)
+
         error_msg = f"Boot timeout after {timeout} seconds"
         self._log(error_msg)
         if self._boot_callback:
             self._boot_callback(False)
         return False, error_msg
-    
+
     def stop(self, force: bool = False) -> Tuple[bool, str]:
         """Stop the emulator."""
         if not self.is_running():
             return True, "Emulator not running"
-        
+
         try:
             if force:
-                # Force kill
                 PlatformUtils.kill_process_tree(self._process.pid)
                 self._log("Emulator force stopped")
             else:
-                # Graceful shutdown via adb
-                adb = PlatformUtils.get_adb_path()
-                PlatformUtils.run_command([str(adb), "emu", "kill"], timeout=10)
+                self._run_adb(["emu", "kill"], timeout=10)
                 self._log("Emulator stop requested")
-                
-                # Wait a bit for graceful shutdown
+
                 for _ in range(20):
                     if not self.is_running():
                         break
                     time.sleep(0.5)
-                
-                # Force kill if still running
+
                 if self.is_running():
                     PlatformUtils.kill_process_tree(self._process.pid)
                     self._log("Emulator force killed after timeout")
-            
+
             self._process = None
+            self._serial = None
             return True, "Emulator stopped"
-            
+
         except Exception as e:
             return False, f"Failed to stop emulator: {e}"
-    
+
     def restart(self, mode: PerformanceMode, no_window: bool = False,
                 open_window: bool = False) -> Tuple[bool, str]:
         """Restart the emulator (forwards the windowing of ``start``)."""
         self.stop()
         time.sleep(1)
         return self.start(mode, no_window=no_window, open_window=open_window)
-    
-    def save_snapshot(self, name: str = "auto") -> Tuple[bool, str]:
+
+    # -- snapshots -------------------------------------------------------
+
+    def save_snapshot(self, name: str = BOOT_SNAPSHOT) -> Tuple[bool, str]:
         """Save emulator state to a snapshot."""
         if not self.is_running():
             return False, "Emulator not running"
-        
-        try:
-            adb = PlatformUtils.get_adb_path()
-            result = PlatformUtils.run_command(
-                [str(adb), "emu", "avd", "snapshot", "save", name],
-                timeout=30
-            )
-            if result.returncode == 0:
-                self._log(f"Snapshot '{name}' saved")
-                return True, f"Snapshot '{name}' saved"
-            else:
-                return False, f"Snapshot save failed: {result.stderr}"
-        except Exception as e:
-            return False, f"Snapshot error: {e}"
-    
-    def load_snapshot(self, name: str = "auto") -> Tuple[bool, str]:
+
+        result = self._run_adb(
+            ["emu", "avd", "snapshot", "save", name], timeout=60)
+        if result is not None and result.returncode == 0:
+            self._log(f"Snapshot '{name}' saved")
+            return True, f"Snapshot '{name}' saved"
+        detail = (result.stderr if result is not None else "") or "adb failed"
+        return False, f"Snapshot save failed: {detail}"
+
+    def load_snapshot(self, name: str = BOOT_SNAPSHOT) -> Tuple[bool, str]:
         """Load emulator state from a snapshot."""
         if not self.is_running():
             return False, "Emulator not running"
-        
-        try:
-            adb = PlatformUtils.get_adb_path()
-            result = PlatformUtils.run_command(
-                [str(adb), "emu", "avd", "snapshot", "load", name],
-                timeout=30
-            )
-            if result.returncode == 0:
-                self._log(f"Snapshot '{name}' loaded")
-                return True, f"Snapshot '{name}' loaded"
-            else:
-                return False, f"Snapshot load failed: {result.stderr}"
-        except Exception as e:
-            return False, f"Snapshot error: {e}"
-    
+
+        result = self._run_adb(
+            ["emu", "avd", "snapshot", "load", name], timeout=60)
+        if result is not None and result.returncode == 0:
+            self._log(f"Snapshot '{name}' loaded")
+            return True, f"Snapshot '{name}' loaded"
+        detail = (result.stderr if result is not None else "") or "adb failed"
+        return False, f"Snapshot load failed: {detail}"
+
     def delete_snapshot(self, name: str) -> Tuple[bool, str]:
-        """Delete a snapshot."""
-        try:
-            adb = PlatformUtils.get_adb_path()
-            result = PlatformUtils.run_command(
-                [str(adb), "emu", "avd", "snapshot", "delete", name],
-                timeout=10
-            )
-            if result.returncode == 0:
+        """Delete a snapshot via the emulator console or on disk."""
+        if self.is_running():
+            result = self._run_adb(
+                ["emu", "avd", "snapshot", "delete", name], timeout=10)
+            if result is not None and result.returncode == 0:
                 return True, f"Snapshot '{name}' deleted"
-            return False, f"Snapshot delete failed: {result.stderr}"
-        except Exception as e:
-            return False, f"Snapshot error: {e}"
-    
+        self._delete_snapshot_files(name)
+        if not self.has_snapshot(name):
+            return True, f"Snapshot '{name}' deleted"
+        return False, f"Snapshot '{name}' could not be deleted"
+
     def list_snapshots(self) -> List[str]:
         """List available snapshots."""
-        try:
-            adb = PlatformUtils.get_adb_path()
-            result = PlatformUtils.run_command(
-                [str(adb), "emu", "avd", "snapshot", "list"],
-                timeout=10
-            )
-            if result.returncode == 0:
-                lines = result.stdout.strip().split("\n")
-                snapshots = []
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith("snapshot"):
-                        snapshots.append(line)
-                return snapshots
-        except Exception:
-            pass
+        result = self._run_adb(["emu", "avd", "snapshot", "list"], timeout=10)
+        if result is not None and result.returncode == 0:
+            lines = (result.stdout or "").strip().split("\n")
+            snapshots = []
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith("snapshot"):
+                    snapshots.append(line)
+            return snapshots
         return []
-    
+
     def get_emulator_info(self) -> dict:
         """Get emulator info for resource monitoring."""
         info = {
@@ -302,7 +492,7 @@ class EmulatorManager:
             "pid": self.get_pid(),
             "avd_name": self.avd_name,
         }
-        
+
         if self.is_running():
             try:
                 import psutil
@@ -312,22 +502,20 @@ class EmulatorManager:
                 info["memory_percent"] = proc.memory_percent()
             except Exception:
                 pass
-        
+
         return info
 
 
 class EmulatorMonitor:
     """Background monitor for emulator health and resource usage."""
-    
-    def __init__(self, emulator_manager: EmulatorManager, 
-                 update_callback: Callable[[dict], None],
-                 interval: float = 2.0):
+
+    def __init__(self, emulator_manager, update_callback, interval: float = 2.0):
         self._emulator = emulator_manager
         self._callback = update_callback
         self._interval = interval
         self._running = False
         self._thread: Optional[threading.Thread] = None
-    
+
     def start(self):
         """Start monitoring."""
         if self._running:
@@ -335,13 +523,13 @@ class EmulatorMonitor:
         self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-    
+
     def stop(self):
         """Stop monitoring."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
-    
+
     def _monitor_loop(self):
         while self._running:
             try:

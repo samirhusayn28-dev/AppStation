@@ -1,0 +1,11 @@
+=== cold boot ===
+command: /Users/samirhusayn/.apkpreview/sdk/emulator/emulator -avd apkpreview_default -memory 2048 -cores 2 -gpu host -no-audio -no-boot-anim -no-window -skin 1080x1920 -dpi-device 420 -camera-back virtualscene -no-snapshot-load -no-snapshot-save -port 5580
+=== saving quickboot snapshot ===
+snapshot save: True OK
+=== warm boot (quickboot snapshot) ===
+command: /Users/samirhusayn/.apkpreview/sdk/emulator/emulator -avd apkpreview_default -memory 2048 -cores 2 -gpu host -no-audio -no-boot-anim -no-window -skin 1080x1920 -dpi-device 420 -camera-back virtualscene -no-snapshot-save -snapshot bench_warm -port 5580
+
+cold   boot  44.13s  peak RAM  2766.5 MB  idle CPU  33.5%  idle RAM  2755.7 MB
+warm   boot   6.90s  peak RAM  2470.6 MB  idle CPU  13.2%  idle RAM  2464.0 MB
+
+JSON written to benchmarks/before.json

@@ -507,10 +507,14 @@ class SDKManager:
         legacy = self.find_legacy_avd()
         if legacy is not None:
             _, legacy_version = legacy
-            key = (legacy_version.api_level, legacy_version.variant)
-            if key not in seen:
-                merged.append(replace(legacy_version, abi=abi))
-                seen.add(key)
+            # Host-matching ABI guard: only include the legacy AVD if its
+            # system-image ABI matches the host CPU; otherwise a mismatch
+            # would cause the emulator to run incompatible binaries.
+            if legacy_version.abi == abi:
+                key = (legacy_version.api_level, legacy_version.variant)
+                if key not in seen:
+                    merged.append(replace(legacy_version, abi=abi))
+                    seen.add(key)
 
         merged.sort(key=lambda v: (
             -v.api_level,
@@ -1075,9 +1079,12 @@ class SDKManager:
                 "hw.ramSize": str(config.memory_mb),
                 "hw.cpu.ncore": str(config.cores),
                 "hw.gpu.mode": config.gpu_mode,
+                "hw.gpu.enabled": "yes" if config.gpu_mode != "off" else "no",
                 "hw.lcd.width": str(config.screen_width),
                 "hw.lcd.height": str(config.screen_height),
                 "hw.lcd.density": str(config.density),
+                "hw.camera.back": "none",
+                "hw.camera.front": "none",
                 "hw.audioInput": "no" if config.no_audio else "yes",
                 "hw.audioOutput": "no" if config.no_audio else "yes",
                 "disk.dataPartition.size": data_partition_size,

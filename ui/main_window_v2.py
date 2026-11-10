@@ -7,6 +7,7 @@ worker threads so the UI never blocks. Layouts only - no setGeometry/move/setFix
 """
 
 import time
+import os
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 
@@ -29,6 +30,7 @@ from .android_versions_dialog import AndroidVersionsDialog
 from core.platform_utils import PlatformUtils
 from core.sdk_manager import SDKManager, ANDROID_VERSION_NAMES
 from core.hardware_profile import HardwareProfiler, PerformanceMode
+from core.platform_utils import PlatformUtils
 from core.emulator import EmulatorManager
 from core.adb import ADB, detect_package_and_activity
 from core.scrcpy import ScrcpyManager
@@ -677,6 +679,41 @@ class MainWindowV2(QMainWindow):
         setup_layout.addStretch(1)
         grid.addWidget(setup_row, 13, 1, 1, 5)
 
+        # Row 14 - Performance mode
+        section("Performance", 14)
+        perf_row = QWidget()
+        perf_layout = QHBoxLayout(perf_row)
+        perf_layout.setContentsMargins(0, 0, 0, 0)
+        perf_layout.setSpacing(6)
+        self.combo_perf = QComboBox()
+        self.combo_perf.addItems(["Auto", "Low", "Normal", "High"])
+        # Map display text to setting values
+        self.combo_perf.setItemData(0, "auto", role=Qt.ItemDataRole.EditRole)
+        self.combo_perf.setItemData(1, "low", role=Qt.ItemDataRole.EditRole)
+        self.combo_perf.setItemData(2, "normal", role=Qt.ItemDataRole.EditRole)
+        self.combo_perf.setItemData(3, "high", role=Qt.ItemDataRole.EditRole)
+        self.combo_perf.setCurrentText("Auto" if settings.performance_mode == "auto"
+                                      else "Low" if settings.performance_mode in ("low", "low_spec")
+                                      else "Normal" if settings.performance_mode == "normal"
+                                      else "High")
+        self.combo_perf.setMinimumWidth(120)
+        perf_layout.addWidget(QLabel("Mode:"))
+        perf_layout.addWidget(self.combo_perf)
+        grid.addWidget(perf_row, 14, 1, 1, 5)
+
+        # Row 15 - Low-power mode
+        section("Battery", 15)
+        lowpow_row = QWidget()
+        lowpow_layout = QHBoxLayout(lowpow_row)
+        lowpow_layout.setContentsMargins(0, 0, 0, 0)
+        lowpow_layout.setSpacing(6)
+        self.chk_low_power = QCheckBox("Low-power mode (battery saver)")
+        self.chk_low_power.setChecked(settings.low_power_mode)
+        self.chk_low_power.setMinimumWidth(180)
+        lowpow_layout.addWidget(QLabel(":"))
+        lowpow_layout.addWidget(self.chk_low_power)
+        grid.addWidget(lowpow_row, 15, 1, 1, 5)
+
         # Let widget columns share the extra width evenly
         for c in range(1, 6):
             grid.setColumnStretch(c, 1)
@@ -711,6 +748,9 @@ class MainWindowV2(QMainWindow):
 
         self.lbl_emulator_specs = QLabel("Emulator RAM/CPU: --")
         row.addWidget(self.lbl_emulator_specs)
+
+        self.lbl_app_cpu = QLabel("App CPU: --")
+        row.addWidget(self.lbl_app_cpu)
 
         self.lbl_disk = QLabel("Free disk: --")
         row.addWidget(self.lbl_disk)
@@ -773,6 +813,10 @@ class MainWindowV2(QMainWindow):
         # Android version chooser
         self.btn_android_version.clicked.connect(self._on_open_android_versions)
         self.btn_rerun_setup.clicked.connect(self._on_rerun_setup)
+
+        # Performance mode + low-power (save immediately)
+        self.combo_perf.currentIndexChanged.connect(self._on_performance_changed)
+        self.chk_low_power.toggled.connect(self._on_low_power_changed)
 
         # NOTE: the status-row timer is wired in __init__; nothing else is left.
 
@@ -962,8 +1006,34 @@ class MainWindowV2(QMainWindow):
             mode = self._profiler.get_mode()
         except Exception:
             mode = PerformanceMode.NORMAL
+        # Respect explicitly-set overrides from the UI.
+        if settings.performance_mode != "auto":
+            mode = PerformanceMode.from_setting(settings.performance_mode) or mode
+        if settings.low_power_mode:
+            mode = PerformanceMode.LOW_SPEC
         self._mode = mode
-        self.lbl_mode.setText(f"Mode: {mode.value.replace('_', ' ').title()}")
+        self.lbl_mode.setText(f"Mode: {mode.label}")
+
+    def _on_performance_changed(self, index: int):
+        """User changed the performance mode combo."""
+        values = ["auto", "low", "normal", "high"]
+        choice = values[index] if 0 <= index < len(values) else "auto"
+        settings.performance_mode = choice
+        # Update the profiler and UI immediately.
+        try:
+            mode = PerformanceMode.from_setting(choice) or self._profiler.get_mode()
+        except Exception:
+            mode = PerformanceMode.NORMAL
+        self._mode = mode
+        self.lbl_mode.setText(f"Mode: {mode.label}")
+        self._set_status(f"Performance mode set to {self._mode.label}")
+
+    def _on_low_power_changed(self, checked: bool):
+        """User toggled the low-power mode checkbox."""
+        settings.low_power_mode = checked
+        # Immediately re-apply the mode (may switch to LOW_SPEC).
+        self._profile_mode()
+        self._set_status(f"Low-power mode {'enabled' if checked else 'disabled'}")
 
     def _set_status(self, message: str):
         """Show a status/error message in the status row (never raise)."""
@@ -1806,6 +1876,26 @@ class MainWindowV2(QMainWindow):
                 self.lbl_emulator_specs.setText("Emulator --")
         except Exception:
             self.lbl_emulator_specs.setText("Emulator --")
+
+        # --- App CPU --------------------------------------------------------
+        try:
+            app_cache = getattr(self, "_app_proc_cache", None)
+            if app_cache is None:
+                app_cache = {}
+                self._app_proc_cache = app_cache
+
+            # Prime the CPU counter on first call
+            proc = psutil.Process(os.getpid())
+            app_cache[os.getpid()] = proc
+
+            app_proc = app_cache.get(os.getpid())
+            if app_proc is not None:
+                app_cpu = app_proc.cpu_percent(None)  # instant percentage
+                self.lbl_app_cpu.setText(f"App CPU: {int(round(app_cpu))}%")
+            else:
+                self.lbl_app_cpu.setText("App CPU: --")
+        except Exception:
+            self.lbl_app_cpu.setText("App CPU: --")
 
         try:
             sdk_dir = PlatformUtils.get_sdk_dir()

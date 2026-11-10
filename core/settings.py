@@ -15,7 +15,9 @@ class Settings:
         "window_geometry": None,
         "main_window_state": None,
         "screen_window_geometry": None,
-        "performance_mode": "auto",  # auto, low_spec, normal
+        "performance_mode": "auto",  # auto, low_spec, normal, high
+        "low_power_mode": False,
+        "quickboot": True,
         "device_preset": "default",
         # native = real emulator window (default), embedded = in-app scrcpy view
         "display_mode": "native",
@@ -119,7 +121,28 @@ class Settings:
     
     @performance_mode.setter
     def performance_mode(self, value: str):
+        value = str(value or "auto").strip().lower()
+        if value not in ("auto", "low", "low_spec", "normal", "high"):
+            value = "auto"
         self.set("performance_mode", value)
+
+    @property
+    def low_power_mode(self) -> bool:
+        """Battery-saver override for the emulator and preview."""
+        return bool(self._data.get("low_power_mode", False))
+
+    @low_power_mode.setter
+    def low_power_mode(self, value: bool):
+        self.set("low_power_mode", bool(value))
+
+    @property
+    def quickboot(self) -> bool:
+        """Use a quickboot snapshot for warm starts when one exists."""
+        return bool(self._data.get("quickboot", True))
+
+    @quickboot.setter
+    def quickboot(self, value: bool):
+        self.set("quickboot", bool(value))
     
     @property
     def device_preset(self) -> str:
@@ -183,7 +206,9 @@ class Settings:
     
     @scrcpy_max_fps.setter
     def scrcpy_max_fps(self, value: int):
-        self.set("scrcpy_max_fps", max(1, min(60, value)))
+        # The preview is deliberately capped at 30 fps: above that the UI
+        # timer and painting cost more than the stream gains.
+        self.set("scrcpy_max_fps", max(1, min(30, int(value))))
     
     @property
     def screen_window_geometry(self) -> Optional[str]:

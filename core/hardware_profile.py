@@ -12,7 +12,33 @@ class PerformanceMode(Enum):
     """Performance mode for the emulator."""
     LOW_SPEC = "low_spec"
     NORMAL = "normal"
+    HIGH = "high"
     NOT_SUPPORTED = "not_supported"
+
+    @classmethod
+    def from_setting(cls, value: str) -> Optional["PerformanceMode"]:
+        """Map a persisted/manual setting to a mode.
+
+        ``auto`` (and unknown values) return ``None`` so the caller can use
+        hardware detection.  ``low`` is accepted as an alias for the historical
+        ``low_spec`` value.
+        """
+        mapping = {
+            "low": cls.LOW_SPEC,
+            "low_spec": cls.LOW_SPEC,
+            "normal": cls.NORMAL,
+            "high": cls.HIGH,
+        }
+        return mapping.get(str(value or "").strip().lower())
+
+    @property
+    def label(self) -> str:
+        return {
+            self.LOW_SPEC: "Low",
+            self.NORMAL: "Normal",
+            self.HIGH: "High",
+            self.NOT_SUPPORTED: "Not supported",
+        }.get(self, self.value.replace("_", " ").title())
 
 
 class CompatibilityVerdict(Enum):
@@ -88,6 +114,10 @@ class HardwareProfiler:
     # Thresholds for mode selection
     LOW_SPEC_RAM_THRESHOLD_MB = 8192  # 8 GB
     LOW_SPEC_CORES_THRESHOLD = 4
+    # High is opt-in (manual override) on very strong machines.  Auto mode
+    # stays on Normal for typical 8-16 GB laptops.
+    HIGH_RAM_THRESHOLD_MB = 16384
+    HIGH_CORES_THRESHOLD = 8
     
     # Disk warning threshold
     LOW_DISK_WARNING_GB = 5
@@ -258,6 +288,9 @@ class HardwareProfiler:
             self._mode = PerformanceMode.NOT_SUPPORTED
         elif is_low_spec:
             self._mode = PerformanceMode.LOW_SPEC
+        elif (p.total_ram_mb > self.HIGH_RAM_THRESHOLD_MB
+              and p.cpu_logical_cores > self.HIGH_CORES_THRESHOLD):
+            self._mode = PerformanceMode.HIGH
         else:
             self._mode = PerformanceMode.NORMAL
     
@@ -289,11 +322,32 @@ class HardwareProfiler:
         """Check if user can proceed (only hard blocks prevent)."""
         return self.get_verdict() != CompatibilityVerdict.NOT_SUPPORTED
     
-    def get_emulator_config(self, mode: Optional[PerformanceMode] = None) -> EmulatorConfig:
-        """Get emulator configuration for the given mode."""
+    def get_emulator_config(self, mode: Optional[PerformanceMode] = None,
+                            low_power: bool = False) -> EmulatorConfig:
+        """Get emulator configuration for the given mode.
+
+        ``low_power`` applies a battery-saver override on top of the selected
+        profile: one core, 1 GB RAM, software GPU and a small screen.  The
+        preview layer also lowers its frame rate when this is enabled.
+        """
         if mode is None:
             mode = self.get_mode()
-        
+
+        if low_power:
+            return EmulatorConfig(
+                api_level=30,
+                memory_mb=1024,
+                cores=1,
+                gpu_mode="swiftshader_indirect",
+                screen_width=720,
+                screen_height=1280,
+                density=280,
+                no_audio=True,
+                no_boot_anim=True,
+                no_snapshot_save=True,
+                no_window=False,
+            )
+
         if mode == PerformanceMode.LOW_SPEC:
             # Android 10/11 (API 29/30) - lighter images
             api_level = 30  # Android 11
@@ -321,6 +375,22 @@ class HardwareProfiler:
                 screen_width=1080,
                 screen_height=1920,
                 density=420,
+                no_audio=True,
+                no_boot_anim=True,
+                no_snapshot_save=True,
+                no_window=False,
+            )
+        elif mode == PerformanceMode.HIGH:
+            # Opt-in profile for strong desktops.  Cap cores at 4 so the host
+            # stays responsive; the user chose this explicitly.
+            config = EmulatorConfig(
+                api_level=34,
+                memory_mb=4096,
+                cores=4,
+                gpu_mode="host",
+                screen_width=1440,
+                screen_height=2560,
+                density=560,
                 no_audio=True,
                 no_boot_anim=True,
                 no_snapshot_save=True,

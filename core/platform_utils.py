@@ -205,6 +205,9 @@ class PlatformUtils:
             "hyper_v": False,
             "whpx": False,
             "aehd": False,
+            "aehd_driver": False,
+            "firmware_virtualization": False,
+            "backend": "none",
             "message": "",
         }
         
@@ -230,14 +233,36 @@ class PlatformUtils:
             if "Enabled" in out.stdout:
                 result["whpx"] = True
             
+            # Android Emulator Hypervisor Driver (AEHD) service, if installed.
+            try:
+                aehd = subprocess.run(
+                    ["sc", "query", "aehd"], capture_output=True, text=True,
+                    timeout=10)
+                if aehd.returncode == 0 and "RUNNING" in aehd.stdout.upper():
+                    result["aehd_driver"] = True
+                    result["aehd"] = True
+            except Exception:
+                pass
+
             # Check if virtualization is enabled in BIOS (via systeminfo)
             out = subprocess.run(
                 ["systeminfo"], capture_output=True, text=True, timeout=10
             )
             if "Virtualization Enabled In Firmware : Yes" in out.stdout:
+                result["firmware_virtualization"] = True
+                # Keep the historical key populated for callers/tests.
                 result["aehd"] = True
-            
-            result["supported"] = result["hyper_v"] or result["whpx"] or result["aehd"]
+
+            result["supported"] = (result["hyper_v"] or result["whpx"]
+                                   or result["aehd"])
+            if result["whpx"]:
+                result["backend"] = "whpx"
+            elif result["aehd_driver"]:
+                result["backend"] = "aehd"
+            elif result["hyper_v"]:
+                result["backend"] = "hyperv"
+            elif result["firmware_virtualization"]:
+                result["backend"] = "firmware"
             
             if not result["supported"]:
                 result["message"] = (
@@ -260,10 +285,59 @@ class PlatformUtils:
     
     @classmethod
     def check_virtualization_macos(cls) -> dict:
-        """Check virtualization support on macOS."""
+        """Check virtualization support on macOS (Hypervisor.framework/HVF)."""
+        supported = True
+        try:
+            out = subprocess.run(
+                ["sysctl", "-n", "kern.hv_support"], capture_output=True,
+                text=True, timeout=5)
+            if out.returncode == 0 and out.stdout.strip() == "0":
+                supported = False
+        except Exception:
+            pass
         return {
-            "supported": True,
-            "message": "Hypervisor.framework is built into macOS"
+            "supported": supported,
+            "backend": "hvf" if supported else "none",
+            "hvf": supported,
+            "message": ("Hypervisor.framework (HVF) is available"
+                        if supported else
+                        "Hypervisor.framework (HVF) is not available"),
+        }
+
+    @classmethod
+    def get_acceleration_info(cls) -> dict:
+        """Return the host accelerator the Android emulator should use.
+
+        ``backend`` is one of ``hvf`` (macOS), ``whpx`` / ``aehd`` /
+        ``hyperv`` (Windows), ``kvm`` (Linux), or ``none``.  The Android
+        emulator auto-detects the backend; this value is used for the setup
+        diagnostics and to add an explicit ``-accel on`` flag when supported.
+        """
+        if cls.IS_MACOS:
+            info = cls.check_virtualization_macos()
+            return {
+                "backend": info.get("backend", "hvf"),
+                "supported": bool(info.get("supported")),
+                "details": info,
+            }
+        if cls.IS_WINDOWS:
+            info = cls.check_virtualization_windows()
+            return {
+                "backend": info.get("backend", "none"),
+                "supported": bool(info.get("supported")),
+                "details": info,
+            }
+        kvm = Path("/dev/kvm")
+        supported = kvm.exists()
+        return {
+            "backend": "kvm" if supported else "none",
+            "supported": supported,
+            "details": {
+                "supported": supported,
+                "backend": "kvm" if supported else "none",
+                "message": ("KVM is available" if supported
+                            else "KVM is not available"),
+            },
         }
     
     @classmethod
@@ -274,9 +348,11 @@ class PlatformUtils:
         elif cls.IS_MACOS:
             return cls.check_virtualization_macos()
         else:
+            info = cls.get_acceleration_info()
             return {
-                "supported": True,
-                "message": "Linux KVM assumed available"
+                "supported": info["supported"],
+                "backend": info["backend"],
+                "message": info["details"].get("message", ""),
             }
     
     @classmethod
