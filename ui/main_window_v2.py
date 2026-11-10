@@ -661,6 +661,22 @@ class MainWindowV2(QMainWindow):
         version_layout.addStretch(1)
         grid.addWidget(version_row, 12, 1, 1, 5)
 
+        # Row 13 - Re-run the first-run setup wizard
+        section("Setup", 13)
+        setup_row = QWidget()
+        setup_layout = QHBoxLayout(setup_row)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(6)
+        self.btn_rerun_setup = QPushButton("Re-run setup...")
+        self.btn_rerun_setup.setToolTip(
+            "Open the setup wizard again (SDK, licenses, components, device, "
+            "Android version)")
+        self.btn_rerun_setup.setSizePolicy(QSizePolicy.Policy.Minimum,
+                                           QSizePolicy.Policy.Fixed)
+        setup_layout.addWidget(self.btn_rerun_setup)
+        setup_layout.addStretch(1)
+        grid.addWidget(setup_row, 13, 1, 1, 5)
+
         # Let widget columns share the extra width evenly
         for c in range(1, 6):
             grid.setColumnStretch(c, 1)
@@ -756,6 +772,7 @@ class MainWindowV2(QMainWindow):
 
         # Android version chooser
         self.btn_android_version.clicked.connect(self._on_open_android_versions)
+        self.btn_rerun_setup.clicked.connect(self._on_rerun_setup)
 
         # NOTE: the status-row timer is wired in __init__; nothing else is left.
 
@@ -1667,6 +1684,24 @@ class MainWindowV2(QMainWindow):
         dialog.exec()
         # A version may have been removed without a selection change.
         self._refresh_selected_android_label()
+
+    @pyqtSlot()
+    def _on_rerun_setup(self):
+        """Open the resumable setup wizard again."""
+        from .setup_wizard import SetupWizard
+        wizard = SetupWizard(self, force=True)
+        if wizard.exec():
+            self.refresh_after_setup()
+            self._set_status("Setup completed")
+
+    def refresh_after_setup(self):
+        """Re-read the SDK/ADB paths and selected version after the wizard."""
+        self._sdk = SDKManager()
+        self._adb = ADB()
+        self._migrate_legacy_android_version()
+        self._refresh_selected_android_label()
+        self._populate_presets()
+        self._update_emulator_buttons(self._emulator.is_running())
 
     @pyqtSlot(int, str)
     def _on_android_version_selected(self, api_level: int, variant: str):

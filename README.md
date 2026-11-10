@@ -91,23 +91,38 @@ Download from [GitHub Releases](https://github.com/yourusername/apkpreview/relea
 
 ## First Run
 
-On first launch, ApkPreview runs a **Setup Wizard** that:
+On first launch, ApkPreview runs a **nine-step, resumable Setup Wizard**:
 
-1. **Checks hardware compatibility** — Shows verdict: Good / Low-spec / Not supported
-2. **Downloads Android command-line tools** — ~200 MB to `~/.apkpreview/sdk`
-3. **Accepts SDK licenses** — Automatically
-4. **Installs base packages**:
-   - `platform-tools` (adb, fastboot)
-   - `emulator`
-   - (no system image is downloaded yet)
-5. **Downloads scrcpy** — Platform-specific binary to `~/.apkpreview/tools`
-6. **Asks you to pick an Android version** — Opens the "Android versions"
-   dialog; nothing is downloaded until you choose. Each version gets its own AVD
-   named `apkpreview_api<level>_<variant>` with a small 3 GB data partition,
-   created on first Select.
+1. **Welcome** — Explains what will be installed and that no emulator is
+   started during setup.
+2. **Standard or Custom** — Standard installs/repairs Java 17, the Android
+   command-line tools, platform-tools and the emulator. Custom lets you choose
+   components you already have.
+3. **SDK location + Java 17 check** — Defaults to `~/.apkpreview/sdk`; you can
+   point it at an existing Android SDK. A missing JDK is downloaded later into
+   `~/.apkpreview/jdk` without changing system Java.
+4. **System check** — RAM, CPU threads, free disk, Java and hardware
+   virtualization. Warnings do not block setup.
+5. **Android SDK licenses** — Shows the exact license names and the official
+   link; you must tick the consent box before continuing.
+6. **Downloads** — Progress, cancel, retry, resume from a partial file, disk
+   space check and SHA verification where the publisher provides checksums.
+   Closing the wizard and reopening it resumes at the step you reached.
+7. **Device** — Searchable bundled list grouped **Brand > Category** (Phone,
+   Tablet, Foldable), with foldable inner/outer screens and an Apple
+   viewport-only note.
+8. **Android version** — Shows the system-image download size; plain `default`
+   images are recommended for the fastest boot.
+9. **Create the AVD and finish** — Downloads the selected image if needed,
+   creates/reuses one AVD, then finishes. The emulator is never started.
 
-**Total download (base)**: ~600 MB. Android system images (~1.1-2.5 GB each)
-are downloaded later, only when you select them.
+**Base download**: roughly 650 MB (Java 17 + command-line tools +
+platform-tools + emulator). Android system images (~1.2-1.6 GB each) are
+downloaded only after you choose one.
+
+You can reopen the wizard at any time from **Controls → Setup → Re-run
+setup...**. The same downloader is available headlessly for the Windows
+installer as `ApkPreview.exe --bootstrap`.
 
 ---
 

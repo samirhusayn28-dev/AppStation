@@ -1,492 +1,938 @@
-"""Setup wizard for ApkPreview - first-run SDK and tool installation."""
+"""Nine-step, resumable first-run setup wizard.
 
-import os
-from PyQt6.QtWidgets import (QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
-                             QLabel, QProgressBar, QPushButton, QTextEdit,
-                             QCheckBox, QFileDialog, QMessageBox, QComboBox, QLineEdit)
-from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
-from PyQt6.QtGui import QFont
-from core.sdk_manager import SDKManager, ANDROID_VERSION_NAMES
-from core.hardware_profile import HardwareProfiler, PerformanceMode, CompatibilityVerdict
-from core.settings import settings
+Pages (state is saved after every page change, so closing the wizard and
+reopening it resumes where the user left off):
+
+1. Welcome
+2. Standard or Custom install
+3. SDK location + JDK 17 check
+4. System check (RAM/CPU/disk/virtualization)
+5. SDK license display + acceptance
+6. Downloads (JDK if missing, cmdline-tools, platform-tools, emulator)
+7. Device (the grouped, searchable bundled picker)
+8. Android version (with download size)
+9. Create AVD + finish
+
+The wizard never starts the emulator.  All downloads go through
+:mod:`core.bootstrap`, which is also used by the Windows installer.
+"""
+
+import threading
+from pathlib import Path
+
+from PyQt6.QtCore import QThread, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QFont
+from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+                             QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                             QProgressBar, QPushButton, QRadioButton, QTextEdit,
+                             QVBoxLayout, QWidget, QWizard, QWizardPage)
+
+from core.bootstrap import (BASE_COMPONENTS, COMPONENT_LABELS,
+                            COMPONENT_SIZES_MB, BootstrapManager,
+                            SetupState, format_mb, needs_setup)
+from core.device_presets import CATEGORY_PHONE, preset_manager
+from core.hardware_profile import (EmulatorConfig, PerformanceMode,
+                                   get_default_config_for_mode)
 from core.platform_utils import PlatformUtils
-from .android_versions_dialog import AndroidVersionsDialog
+from core.sdk_manager import ANDROID_VERSION_NAMES, AndroidVersion, SDKManager
+from core.settings import settings
+from .device_picker import DevicePickerDialog
 
 
-class SetupWorker(QThread):
-    """Background worker for setup steps."""
+# API levels offered when sdkmanager is not installed yet.  The version page
+# refreshes this list from ``sdkmanager --list`` when it is available.
+FALLBACK_API_LEVELS = (36, 35, 34, 33, 32, 31, 30, 29, 28)
 
-    progress = pyqtSignal(str, int, int, str)  # step, current, total, message
-    step_finished = pyqtSignal(str, bool, str)  # step_name, success, message
-    finished = pyqtSignal(bool, str)  # overall success, message
-    error = pyqtSignal(str)  # error with full details for retry
 
-    def __init__(self, mode: PerformanceMode):
+def _size_for(version: AndroidVersion) -> str:
+    if version.size_text:
+        return version.size_text
+    return f"~{version.estimate_size_gb():.1f} GB"
+
+
+# ---------------------------------------------------------------------------
+# Workers
+# ---------------------------------------------------------------------------
+class BootstrapWorker(QThread):
+    """Install the selected bootstrap components off the UI thread."""
+
+    progress = pyqtSignal(str, int, int, str)
+    log = pyqtSignal(str)
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, manager: BootstrapManager, keys):
         super().__init__()
-        self._mode = mode
-        self._sdk_manager = SDKManager(self._on_progress)
-        self._cancelled = False
+        self._manager = manager
+        self._keys = list(keys)
+        self.cancel_event = threading.Event()
 
-    def _on_progress(self, step: str, current: int, total: int, message: str):
-        self.progress.emit(step, current, total, message)
+    def run(self):
+        self._manager.progress = lambda step, current, total, message: \
+            self.progress.emit(step, current, total, message)
+        self._manager.log = self.log.emit
+        try:
+            ok, message = self._manager.install_components(
+                self._keys, cancel=self.cancel_event)
+        except Exception as exc:  # noqa: BLE001 - surfaced in the UI
+            ok, message = False, f"Setup failed: {exc}"
+        self.done.emit(ok, message)
 
     def cancel(self):
-        self._cancelled = True
+        self.cancel_event.set()
+
+
+class VersionsWorker(QThread):
+    """Load available system images without blocking the wizard."""
+
+    loaded = pyqtSignal(object)
+
+    def __init__(self, sdk: SDKManager):
+        super().__init__()
+        self._sdk = sdk
 
     def run(self):
         try:
-            success, message = self._sdk_manager.run_full_setup(self._mode)
-            self.finished.emit(success, message)
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            self.error.emit(tb)
-            self.finished.emit(False, f"Setup failed with exception: {e}")
+            versions = self._sdk.list_system_images()
+        except Exception:
+            versions = []
+        self.loaded.emit(versions)
 
 
+class AvdWorker(QThread):
+    """Download the chosen image (if needed) and create its AVD."""
+
+    log = pyqtSignal(str)
+    done = pyqtSignal(bool, str, str)
+
+    def __init__(self, sdk: SDKManager, version: AndroidVersion,
+                 config: EmulatorConfig):
+        super().__init__()
+        self._sdk = sdk
+        self._version = version
+        self._config = config
+        self.cancel_event = threading.Event()
+
+    def run(self):
+        try:
+            ok, message, avd = self._sdk.install_version(
+                self._version, config=self._config, old_version=None,
+                on_line=self.log.emit, cancel=self.cancel_event)
+        except Exception as exc:  # noqa: BLE001
+            ok, message, avd = False, f"Could not create the AVD: {exc}", ""
+        self.done.emit(ok, message, avd or "")
+
+    def cancel(self):
+        self.cancel_event.set()
+
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
 class WelcomePage(QWizardPage):
-    """Welcome page with hardware compatibility check."""
-    
     def __init__(self):
         super().__init__()
         self.setTitle("Welcome to ApkPreview")
-        self.setSubTitle("Let's set up your Android testing environment")
-        self._sdk_manager = SDKManager()
-        self._profiler = HardwareProfiler(sdk_manager=self._sdk_manager)
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-
-        # Compatibility check
-        self.lbl_checking = QLabel("Checking hardware compatibility...")
-        self.lbl_checking.setFont(QFont("", 11))
-        layout.addWidget(self.lbl_checking)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)  # Indeterminate
-        layout.addWidget(self.progress_bar)
-
-        self.lbl_result = QLabel("")
-        self.lbl_result.setWordWrap(True)
-        layout.addWidget(self.lbl_result)
-
-        self.lbl_details = QLabel("")
-        self.lbl_details.setWordWrap(True)
-        self.lbl_details.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self.lbl_details)
-
-        # Download size estimate
-        self.lbl_download = QLabel("")
-        self.lbl_download.setStyleSheet("color: #4ec9b0; font-weight: bold;")
-        layout.addWidget(self.lbl_download)
-
-        layout.addStretch()
-
-        # Run compatibility check
-        QTimer.singleShot(100, self._run_check)
-
-    def _run_check(self):
-        profile = self._profiler.profile()
-        verdict = self._profiler.get_verdict()
-        reasons = self._profiler.get_reasons()
-        mode = self._profiler.get_mode()
-
-        self.progress_bar.setRange(0, 1)
-        self.progress_bar.setValue(1)
-
-        if verdict == CompatibilityVerdict.GOOD:
-            self.lbl_checking.setText("✅ Hardware Compatibility: Good")
-            self.lbl_checking.setStyleSheet("color: #4ec9b0; font-weight: bold;")
-        elif verdict == CompatibilityVerdict.LOW_SPEC:
-            self.lbl_checking.setText("⚠ Hardware Compatibility: Low-Spec Mode")
-            self.lbl_checking.setStyleSheet("color: #dcdcaa; font-weight: bold;")
-        elif verdict == CompatibilityVerdict.WARNING:
-            self.lbl_checking.setText("⚠ Hardware Compatibility: Low Disk Space (Warning)")
-            self.lbl_checking.setStyleSheet("color: #dcdcaa; font-weight: bold;")
-        else:
-            self.lbl_checking.setText("❌ Hardware Compatibility: Not Supported")
-            self.lbl_checking.setStyleSheet("color: #f44747; font-weight: bold;")
-
-        self.lbl_result.setText("\n".join(reasons))
-
-        # Show hardware details
-        p = profile
-        req_disk = f" ({p.required_disk_gb} GB needed)" if p.required_disk_gb > 0 else ""
-        self.lbl_details.setText(
-            f"OS: {p.os} {p.os_version} | "
-            f"CPU: {p.cpu_arch} ({p.cpu_physical_cores}P/{p.cpu_logical_cores}L) | "
-            f"RAM: {p.total_ram_gb:.1f} GB | "
-            f"Disk: {p.free_disk_gb} GB free{req_disk} | "
-            f"Virtualization: {'Yes' if p.virtualization_supported else 'No'}"
-        )
-
-        # Download size estimate
-        from core.sdk_manager import format_size
-        size_mb = self._sdk_estimate_size(mode)
-        self.lbl_download.setText(f"Estimated download size: {format_size(size_mb)}")
-
-        # Store mode for next pages
-        self.wizard().setProperty("performance_mode", mode)
-        self.wizard().setProperty("hardware_profile", profile)
-
-        # Enable next button based on verdict - allow WARNING (can proceed)
-        self.wizard().button(QWizard.WizardButton.NextButton).setEnabled(
-            verdict != CompatibilityVerdict.NOT_SUPPORTED
-        )
-
-    def _sdk_estimate_size(self, mode: PerformanceMode) -> int:
-        """Base toolchain estimate (cmdline-tools + platform-tools + emulator).
-
-        The Android version (system image) is chosen later, so it is not part
-        of this estimate.
-        """
-        sizes = {
-            "cmdline_tools": 200, "platform-tools": 50, "emulator": 300,
-            "scrcpy": 30,
-        }
-        return (sizes["cmdline_tools"] + sizes["platform-tools"]
-                + sizes["emulator"] + sizes["scrcpy"])
-
-    def isComplete(self) -> bool:
-        return self._profiler.get_verdict() != CompatibilityVerdict.NOT_SUPPORTED
-
-
-class InstallPage(QWizardPage):
-    """SDK and tools installation page."""
-
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Installing Android SDK & Tools")
-        self.setSubTitle("This may take several minutes depending on your connection")
-        self._worker: SetupWorker = None
-        self._last_log_message = ""
-        self._setup_ui()
-
-    def _setup_ui(self):
+        self.setSubTitle("Set up a local Android emulator. No Android Studio, "
+                         "no phone, no account.")
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        # Overall progress
-        self.lbl_step = QLabel("Preparing...")
-        layout.addWidget(self.lbl_step)
+        intro = QLabel(
+            "This wizard checks your computer, installs the Android tools "
+            "ApkPreview needs, and creates one emulator device.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
-        self.progress_overall = QProgressBar()
-        self.progress_overall.setRange(0, 100)
-        layout.addWidget(self.progress_overall)
+        bullets = QLabel(
+            "• Java 17, Android command-line tools, platform-tools and the "
+            "emulator\n"
+            "• The Android SDK licenses\n"
+            "• One device from the bundled Apple / Samsung / Google list\n"
+            "• One Android system image and its AVD")
+        bullets.setWordWrap(True)
+        layout.addWidget(bullets)
 
-        # Step progress
-        self.lbl_substep = QLabel("")
-        self.lbl_substep.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self.lbl_substep)
-
-        self.progress_step = QProgressBar()
-        self.progress_step.setRange(0, 100)
-        layout.addWidget(self.progress_step)
-
-        # Log
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumHeight(150)
-        self.log_view.setFont(QFont("Monospace", 9))
-        self.log_view.setStyleSheet("background: #1e1e1e; color: #d4d4d4; border: 1px solid #3a3a3a;")
-        layout.addWidget(self.log_view)
-
-        # Buttons row
-        btn_layout = QHBoxLayout()
-        self.btn_retry = QPushButton("Retry")
-        self.btn_retry.setVisible(False)
-        self.btn_retry.clicked.connect(self._retry)
-        btn_layout.addWidget(self.btn_retry)
-
-        btn_layout.addStretch()
-
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.clicked.connect(self._cancel)
-        btn_layout.addWidget(self.btn_cancel)
-        layout.addLayout(btn_layout)
+        note = QLabel(
+            "Downloads can be several gigabytes. The wizard can be closed and "
+            "reopened: it resumes at the step you reached. The emulator is "
+            "never started during setup.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888;")
+        layout.addWidget(note)
+        layout.addStretch(1)
 
     def initializePage(self):
-        mode = self.wizard().property("performance_mode")
-        if not mode:
-            mode = PerformanceMode.NORMAL
-
-        # Reset UI state
-        self.btn_retry.setVisible(False)
-        self.btn_cancel.setText("Cancel")
-        self.btn_cancel.clicked.disconnect()
-        self.btn_cancel.clicked.connect(self._cancel)
-        self.log_view.clear()
-        self._last_log_message = ""
-
-        self._worker = SetupWorker(mode)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
-
-    def _on_error(self, traceback_str: str):
-        """Handle uncaught exception from worker thread."""
-        self.log_view.append(f"\n❌ EXCEPTION:\n{traceback_str}")
-        self._on_finished(False, "Setup failed with exception (see log above)")
-
-    def _on_progress(self, step: str, current: int, total: int, message: str):
-        # Avoid duplicate log lines
-        if message != self._last_log_message:
-            self.log_view.append(message)
-            self._last_log_message = message
-
-        self.lbl_step.setText(step.replace("_", " ").title())
-        # Clamp progress to 100
-        overall = min(100, int(current * 100 / max(1, total)))
-        self.progress_overall.setValue(overall)
-        self.lbl_substep.setText(message)
-        self.progress_step.setValue(min(100, current if total == 100 else int(current * 100 / max(1, total))))
-
-    def _on_finished(self, success: bool, message: str):
-        self.log_view.append(f"\n{'✅' if success else '❌'} {message}")
-
-        if success:
-            self.btn_cancel.setText("Close")
-            self.btn_cancel.clicked.disconnect()
-            self.btn_cancel.clicked.connect(self.wizard().close)
-            self.wizard().button(QWizard.WizardButton.NextButton).setEnabled(True)
-        else:
-            self.lbl_step.setText("Installation Failed")
-            self.lbl_step.setStyleSheet("color: #f44747; font-weight: bold;")
-            self.btn_cancel.setText("Close")
-            self.btn_cancel.clicked.disconnect()
-            self.btn_cancel.clicked.connect(self.wizard().close)
-            self.btn_retry.setVisible(True)
-
-    def _retry(self):
-        """Retry the installation from the beginning."""
-        self.btn_retry.setVisible(False)
-        self.btn_cancel.setText("Cancel")
-        self.btn_cancel.clicked.disconnect()
-        self.btn_cancel.clicked.connect(self._cancel)
-        self.log_view.clear()
-        self._last_log_message = ""
-        self.lbl_step.setStyleSheet("")
-        self.progress_overall.setValue(0)
-        self.progress_step.setValue(0)
-        self.initializePage()
-
-    def _cancel(self):
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
-        # Kill any leftover child processes
-        PlatformUtils.kill_process_tree(os.getpid())
-        self.wizard().close()
-
-    def isComplete(self) -> bool:
-        return self._worker is not None and not self._worker.isRunning()
+        self.wizard().state.step = 0
+        self.wizard().state.save()
 
 
-class AndroidVersionPage(QWizardPage):
-    """Ask the user to pick an Android version (nothing is auto-downloaded)."""
-
+class InstallTypePage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Choose an Android version")
-        self.setSubTitle(
-            "Pick the Android version to test on. The system image is only "
-            "downloaded when you choose one.")
-        self._sdk_manager = SDKManager()
-        self._skipped = False
-        self._setup_ui()
-
-    def _setup_ui(self):
+        self.setTitle("Standard or Custom")
+        self.setSubTitle("Standard installs everything needed. Custom lets you "
+                         "skip a component you already have.")
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        self.lbl_explain = QLabel(
-            "ApkPreview installs platform-tools and the emulator by default. "
-            "Use the button below to browse available Android versions, "
-            "download one, and select it.")
-        self.lbl_explain.setWordWrap(True)
-        layout.addWidget(self.lbl_explain)
+        self.radio_standard = QRadioButton(
+            "Standard (recommended) — install/repair all required components")
+        self.radio_custom = QRadioButton("Custom — choose components")
+        group = QButtonGroup(self)
+        group.addButton(self.radio_standard)
+        group.addButton(self.radio_custom)
+        self.radio_standard.setChecked(True)
+        layout.addWidget(self.radio_standard)
+        layout.addWidget(self.radio_custom)
 
-        self.lbl_selected = QLabel("Selected: none")
-        self.lbl_selected.setWordWrap(True)
-        layout.addWidget(self.lbl_selected)
+        self.checkboxes = {}
+        for key in BASE_COMPONENTS:
+            box = QCheckBox(f"{COMPONENT_LABELS[key]} "
+                            f"({format_mb(COMPONENT_SIZES_MB.get(key, 0))})")
+            box.setChecked(True)
+            box.setEnabled(False)
+            self.checkboxes[key] = box
+            layout.addWidget(box)
 
-        row = QHBoxLayout()
-        self.btn_choose = QPushButton("Choose Android version...")
-        self.btn_choose.clicked.connect(self._choose)
-        row.addWidget(self.btn_choose)
-        self.btn_skip = QPushButton("Skip for now")
-        self.btn_skip.clicked.connect(self._skip)
-        row.addWidget(self.btn_skip)
-        row.addStretch()
-        layout.addLayout(row)
+        self.radio_standard.toggled.connect(self._sync_mode)
+        self.radio_custom.toggled.connect(self._sync_mode)
+        self._jdk_required = False
+        layout.addStretch(1)
 
-        layout.addStretch()
+    def _sync_mode(self, _checked=False):
+        custom = self.radio_custom.isChecked()
+        for key, box in self.checkboxes.items():
+            if key == "jdk" and self._jdk_required:
+                box.setChecked(True)
+                box.setEnabled(False)
+            else:
+                box.setEnabled(custom)
 
     def initializePage(self):
-        self._refresh()
-
-    def _refresh(self):
-        api = settings.selected_api_level
-        if api > 0:
-            name = ANDROID_VERSION_NAMES.get(api, f"Android {api}")
-            self.lbl_selected.setText(
-                f"Selected: {name} (API {api}, {settings.selected_variant or 'default'})")
+        state = self.wizard().state
+        self._jdk_required = not self.wizard().bootstrap.check_jdk().found
+        if state.install_type == "custom":
+            self.radio_custom.setChecked(True)
         else:
-            self.lbl_selected.setText("Selected: none")
-        self.completeChanged.emit()
+            self.radio_standard.setChecked(True)
+        self._sync_mode()
 
-    def _choose(self):
-        dialog = AndroidVersionsDialog(self._sdk_manager, self)
-        dialog.version_selected.connect(lambda *_: self._refresh())
-        dialog.exec()
-        self._refresh()
+    def components(self):
+        if self.radio_standard.isChecked():
+            return list(BASE_COMPONENTS)
+        selected = [key for key, box in self.checkboxes.items()
+                    if box.isChecked()]
+        if self._jdk_required and "jdk" not in selected:
+            selected.insert(0, "jdk")
+        return selected
 
-    def _skip(self):
-        self._skipped = True
-        self.btn_skip.setEnabled(False)
-        self.completeChanged.emit()
-
-    def isComplete(self) -> bool:
-        return settings.selected_api_level > 0 or self._skipped
-
-
-class SettingsPage(QWizardPage):
-    """Final settings page."""
-
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Configuration")
-        self.setSubTitle("Review and adjust settings")
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        # Performance mode
-        layout.addWidget(QLabel("Performance Mode:"))
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["Auto (Recommended)", "Low-Spec", "Normal"])
-        layout.addWidget(self.combo_mode)
-
-        # SDK path
-        layout.addWidget(QLabel("SDK Location:"))
-        sdk_layout = QHBoxLayout()
-        self.edit_sdk = QLineEdit()
-        self.edit_sdk.setText(str(PlatformUtils.get_sdk_dir()))
-        self.edit_sdk.setReadOnly(True)
-        sdk_layout.addWidget(self.edit_sdk)
-        self.btn_browse = QPushButton("Browse...")
-        self.btn_browse.clicked.connect(self._browse_sdk)
-        sdk_layout.addWidget(self.btn_browse)
-        layout.addLayout(sdk_layout)
-
-        # Auto-start options
-        self.chk_auto_start = QCheckBox("Start emulator on app launch")
-        self.chk_auto_start.setChecked(True)
-        layout.addWidget(self.chk_auto_start)
-
-        self.chk_minimize = QCheckBox("Minimize to tray on close")
-        layout.addWidget(self.chk_minimize)
-
-        layout.addStretch()
-
-    def initializePage(self):
-        # Set initial mode
-        mode = self.wizard().property("performance_mode")
-        if mode:
-            mode_map = {PerformanceMode.LOW_SPEC: 1, PerformanceMode.NORMAL: 2}
-            self.combo_mode.setCurrentIndex(mode_map.get(mode, 0))
-
-    def _browse_sdk(self):
-        path = QFileDialog.getExistingDirectory(self, "Select SDK Directory")
-        if path:
-            self.edit_sdk.setText(path)
-
-    def validatePage(self) -> bool:
-        # Save settings
-        mode_idx = self.combo_mode.currentIndex()
-        mode_map = {0: "auto", 1: "low_spec", 2: "normal"}
-        settings.performance_mode = mode_map.get(mode_idx, "auto")
-        settings.sdk_path = self.edit_sdk.text()
-        settings.first_run_completed = True
+    def validatePage(self):
+        selected = self.components()
+        if not selected:
+            QMessageBox.warning(self, "Choose components",
+                                "Select at least one component to install.")
+            return False
+        wizard = self.wizard()
+        wizard.components = selected
+        wizard.state.install_type = ("custom" if self.radio_custom.isChecked()
+                                     else "standard")
+        wizard.state.save()
         return True
 
 
-class SetupWizard(QWizard):
-    """Main setup wizard."""
+class SdkPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("SDK location and Java 17")
+        self.setSubTitle("ApkPreview keeps its own SDK by default. You can "
+                         "point it at an existing Android SDK instead.")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
 
-    def __init__(self, parent=None):
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("Android SDK folder"))
+        self.edit_path = QLineEdit()
+        self.edit_path.setPlaceholderText(str(PlatformUtils.get_sdk_dir()))
+        path_row.addWidget(self.edit_path, 1)
+        self.btn_browse = QPushButton("Browse...")
+        self.btn_browse.clicked.connect(self._browse)
+        path_row.addWidget(self.btn_browse)
+        layout.addLayout(path_row)
+
+        self.lbl_jdk = QLabel("")
+        self.lbl_jdk.setWordWrap(True)
+        layout.addWidget(self.lbl_jdk)
+
+        self.btn_check = QPushButton("Check Java again")
+        self.btn_check.clicked.connect(self._refresh_jdk)
+        layout.addWidget(self.btn_check)
+
+        note = QLabel(
+            "Java 17 is required by sdkmanager. If it is missing, step 6 "
+            "downloads a private copy into ApkPreview's data folder; your "
+            "system Java is not modified.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888;")
+        layout.addWidget(note)
+        layout.addStretch(1)
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose Android SDK folder", self.edit_path.text())
+        if folder:
+            self.edit_path.setText(folder)
+
+    def _refresh_jdk(self):
+        status = self.wizard().bootstrap.check_jdk()
+        if status.found:
+            self.lbl_jdk.setText(f"✓ {status.message}: {status.path}")
+            self.lbl_jdk.setStyleSheet("color: #4ec9b0;")
+        else:
+            self.lbl_jdk.setText(
+                "Java 17 not found. It will be downloaded in step 6.")
+            self.lbl_jdk.setStyleSheet("color: #e0a030;")
+
+    def initializePage(self):
+        state = self.wizard().state
+        path = state.sdk_path or str(PlatformUtils.get_sdk_dir())
+        self.edit_path.setText(path)
+        self._refresh_jdk()
+
+    def validatePage(self):
+        raw = self.edit_path.text().strip()
+        if not raw:
+            QMessageBox.warning(self, "SDK location",
+                                "Choose an SDK folder.")
+            return False
+        path = Path(raw).expanduser()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "SDK location",
+                                f"Cannot create {path}:\n{exc}")
+            return False
+        self.wizard().set_sdk_path(path)
+        return True
+
+
+class SystemCheckPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("System check")
+        self.setSubTitle("ApkPreview works best with 8 GB RAM, 4 CPU threads, "
+                         "10 GB free disk and hardware virtualization.")
+        layout = QVBoxLayout(self)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        layout.addWidget(self.details, 1)
+        self.warning = QLabel("")
+        self.warning.setWordWrap(True)
+        layout.addWidget(self.warning)
+
+    def initializePage(self):
+        report = self.wizard().bootstrap.system_report()
+        virt = report["virtualization"]
+        lines = [
+            f"Operating system: {report['os']}",
+            f"Architecture: {report['architecture']}",
+            f"CPU: {report['physical_cores']} physical / "
+            f"{report['logical_cores']} logical threads",
+            f"RAM: {report['ram_mb']} MB",
+            f"Free disk: {report['free_disk_gb']:.1f} GB",
+            f"Virtualization: {virt.get('message', 'unknown')}",
+            f"Java: {report['jdk'].message}",
+        ]
+        self.details.setPlainText("\n".join(lines))
+        if report["warnings"]:
+            self.warning.setText("Warnings:\n• " +
+                                 "\n• ".join(report["warnings"]))
+            self.warning.setStyleSheet("color: #e0a030;")
+        else:
+            self.warning.setText("No blocking problems found.")
+            self.warning.setStyleSheet("color: #4ec9b0;")
+
+
+class LicensePage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Android SDK licenses")
+        self.setSubTitle("Read the license names and open the official text "
+                         "before accepting.")
+        layout = QVBoxLayout(self)
+        self.text = QTextEdit()
+        self.text.setReadOnly(True)
+        layout.addWidget(self.text, 1)
+
+        self.btn_open = QPushButton("Open official license page")
+        self.btn_open.clicked.connect(self._open_license)
+        layout.addWidget(self.btn_open)
+
+        self.check = QCheckBox(
+            "I have read and agree to the Android SDK License Agreement")
+        self.check.toggled.connect(self.completeChanged.emit)
+        layout.addWidget(self.check)
+
+    def _open_license(self):
+        QDesktopServices.openUrl(
+            QUrl("https://developer.android.com/studio/terms"))
+
+    def initializePage(self):
+        self.text.setPlainText(self.wizard().bootstrap.license_text())
+        if self.wizard().bootstrap.licenses_accepted():
+            self.check.setChecked(True)
+
+    def isComplete(self):
+        return self.check.isChecked()
+
+    def validatePage(self):
+        if not self.check.isChecked():
+            QMessageBox.warning(
+                self, "Licenses",
+                "Accept the Android SDK license to continue.")
+            return False
+        self.wizard().state.licenses_accepted = True
+        self.wizard().state.save()
+        return True
+
+
+class DownloadPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Download Android requirements")
+        self.setSubTitle("Downloads can be resumed, retried and cancelled. "
+                         "Checksums are verified when the publisher provides "
+                         "them.")
+        self._worker = None
+        self._complete = False
+
+        layout = QVBoxLayout(self)
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        layout.addWidget(self.progress)
+
+        self.status = QLabel("Ready")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        buttons = QHBoxLayout()
+        self.btn_start = QPushButton("Start downloads")
+        self.btn_start.clicked.connect(self.start_downloads)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.cancel_downloads)
+        self.btn_cancel.setEnabled(False)
+        self.btn_retry = QPushButton("Retry failed component")
+        self.btn_retry.clicked.connect(self.start_downloads)
+        self.btn_retry.setEnabled(False)
+        buttons.addWidget(self.btn_start)
+        buttons.addWidget(self.btn_cancel)
+        buttons.addWidget(self.btn_retry)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        layout.addWidget(self.log, 1)
+
+    def initializePage(self):
+        manager = self.wizard().bootstrap
+        missing = [key for key in self.wizard().components
+                   if not manager.is_component_installed(key)]
+        required_mb = sum(COMPONENT_SIZES_MB.get(key, 0) for key in missing)
+        self.summary.setText(
+            f"Components to install: "
+            f"{', '.join(COMPONENT_LABELS.get(k, k) for k in missing) or 'none'}"
+            f"  ({format_mb(required_mb)})")
+        ok, message = manager.disk_space_ok(required_mb)
+        if not ok:
+            self.status.setText(message)
+            self.status.setStyleSheet("color: #e06060;")
+            self.btn_start.setEnabled(False)
+        else:
+            self.status.setText(f"Disk check: {message}")
+            self.status.setStyleSheet("color: #4ec9b0;")
+            self.btn_start.setEnabled(not self._complete)
+        if not missing:
+            self._complete = True
+            self.progress.setValue(100)
+            self.status.setText("All required components are already installed.")
+            self.btn_start.setEnabled(False)
+            self.completeChanged.emit()
+
+    def isComplete(self):
+        if self._complete:
+            return True
+        manager = self.wizard().bootstrap
+        return all(manager.is_component_installed(key)
+                   for key in self.wizard().components)
+
+    def start_downloads(self):
+        if self._worker is not None and self._worker.isRunning():
+            return
+        manager = self.wizard().bootstrap
+        self.btn_start.setEnabled(False)
+        self.btn_retry.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.progress.setValue(0)
+        self.log.clear()
+        self.status.setText("Starting downloads...")
+        self.status.setStyleSheet("")
+
+        self._worker = BootstrapWorker(manager, self.wizard().components)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.log.connect(self._append_log)
+        self._worker.done.connect(self._on_done)
+        self._worker.finished.connect(self._on_thread_finished)
+        self._worker.start()
+
+    def cancel_downloads(self):
+        if self._worker is not None:
+            self._worker.cancel()
+            self.status.setText("Cancelling after the current chunk...")
+
+    def _on_progress(self, step, current, total, message):
+        if total > 1:
+            self.progress.setValue(int(current * 100 / total))
+        else:
+            self.progress.setValue(0)
+        self.status.setText(f"{step}: {message}")
+
+    def _append_log(self, line):
+        self.log.append(line)
+        self.log.verticalScrollBar().setValue(
+            self.log.verticalScrollBar().maximum())
+
+    def _on_done(self, ok, message):
+        self.btn_cancel.setEnabled(False)
+        if ok:
+            self._complete = True
+            self.progress.setValue(100)
+            self.status.setText("Android requirements installed.")
+            self.status.setStyleSheet("color: #4ec9b0;")
+            self.wizard().state.components_done = list(self.wizard().components)
+            self.wizard().state.save()
+            self.completeChanged.emit()
+        else:
+            self.status.setText(f"Download failed: {message}")
+            self.status.setStyleSheet("color: #e06060;")
+            self.btn_start.setEnabled(True)
+            self.btn_retry.setEnabled(True)
+
+    def _on_thread_finished(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+
+
+class DevicePage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Choose a device")
+        self.setSubTitle("Bundled Apple, Samsung and Google devices, grouped "
+                         "Brand > Category. Apple entries are viewport-only "
+                         "previews.")
+        layout = QVBoxLayout(self)
+        self.label = QLabel("")
+        self.label.setWordWrap(True)
+        self.label.setFont(QFont("", 11))
+        layout.addWidget(self.label)
+        self.btn_choose = QPushButton("Choose device...")
+        self.btn_choose.clicked.connect(self._choose)
+        layout.addWidget(self.btn_choose)
+        self.note = QLabel(
+            "The emulator always runs Android. Apple presets only match the "
+            "iPhone/iPad viewport and frame; they cannot run iOS apps.")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet("color: #888;")
+        layout.addWidget(self.note)
+        layout.addStretch(1)
+
+    def initializePage(self):
+        state = self.wizard().state
+        if not state.device_key or preset_manager.get_preset(
+                state.device_key) is None:
+            # Sensible default: a current Pixel phone.
+            default = preset_manager.get_preset("google_pixel_8")
+            if default is None:
+                phones = [p for p in preset_manager.get_all_presets().values()
+                          if p.category == CATEGORY_PHONE]
+                default = phones[0] if phones else None
+            if default is not None:
+                state.device_key = default.key
+                state.save()
+        self._refresh()
+
+    def _refresh(self):
+        preset = preset_manager.get_preset(self.wizard().state.device_key)
+        if preset is None:
+            self.label.setText("No device selected")
+            self.completeChanged.emit()
+            return
+        text = (f"{preset.brand} {preset.name}\n"
+                f"{preset.category} · {preset.size_str} @ {preset.density} dpi "
+                f"· {preset.cutout_label}")
+        if preset.is_foldable and preset.inner and preset.outer:
+            text += (f"\nInner {preset.inner.size_str}, cover "
+                     f"{preset.outer.size_str} (switch in Controls)")
+        if preset.preview_only:
+            text += "\nApple viewport/frame preview only — no iOS apps."
+        if preset.rumored:
+            text += "\nRumored/unconfirmed device."
+        self.label.setText(text)
+        self.completeChanged.emit()
+
+    def _choose(self):
+        dialog = DevicePickerDialog(self, self.wizard().state.device_key)
+        if dialog.exec():
+            key = dialog.selected_key()
+            if key:
+                self.wizard().state.device_key = key
+                self.wizard().state.save()
+                self._refresh()
+
+    def isComplete(self):
+        return preset_manager.get_preset(
+            self.wizard().state.device_key) is not None
+
+    def validatePage(self):
+        if not self.isComplete():
+            QMessageBox.warning(self, "Choose a device",
+                                "Choose a device before continuing.")
+            return False
+        return True
+
+
+class VersionPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Choose an Android version")
+        self.setSubTitle("Plain 'default' images are recommended for the "
+                         "fastest boot. The download size is shown.")
+        self._versions = []
+        self._worker = None
+
+        layout = QVBoxLayout(self)
+        self.combo = QComboBox()
+        self.combo.currentIndexChanged.connect(self.completeChanged.emit)
+        layout.addWidget(self.combo)
+
+        self.details = QLabel("")
+        self.details.setWordWrap(True)
+        layout.addWidget(self.details)
+
+        self.loading = QLabel("")
+        self.loading.setStyleSheet("color: #888;")
+        layout.addWidget(self.loading)
+        layout.addStretch(1)
+
+    def initializePage(self):
+        self._populate_fallback()
+        sdk = SDKManager()
+        if sdk.is_sdk_installed():
+            self.loading.setText("Refreshing the list from sdkmanager...")
+            self._worker = VersionsWorker(sdk)
+            self._worker.loaded.connect(self._on_loaded)
+            self._worker.finished.connect(self._on_finished)
+            self._worker.start()
+        else:
+            self.loading.setText(
+                "sdkmanager is not installed yet; showing known Android "
+                "versions with estimated sizes.")
+
+    def _populate_fallback(self):
+        versions = []
+        abi = PlatformUtils.get_image_abi()
+        sdk = SDKManager()
+        for level in FALLBACK_API_LEVELS:
+            installed = sdk.is_system_image_installed(abi, level, "default")
+            versions.append(AndroidVersion(
+                api_level=level, variant="default", abi=abi,
+                installed=installed))
+        self._set_versions(versions)
+
+    def _on_loaded(self, versions):
+        if not versions:
+            self.loading.setText(
+                "sdkmanager returned no list; keeping the known versions.")
+            return
+        # Keep one row per (api, variant), prefer the installed/default row.
+        merged = {}
+        for version in versions:
+            key = (version.api_level, version.variant)
+            previous = merged.get(key)
+            if previous is None or version.installed:
+                merged[key] = version
+        ordered = sorted(
+            merged.values(),
+            key=lambda v: (-v.api_level,
+                           0 if v.variant == "default" else 1,
+                           v.variant))
+        self.loading.setText("List refreshed from sdkmanager.")
+        self._set_versions(ordered)
+
+    def _set_versions(self, versions):
+        self._versions = versions
+        state = self.wizard().state
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        for version in versions:
+            name = ANDROID_VERSION_NAMES.get(version.api_level,
+                                             f"Android {version.api_level}")
+            label = (f"{name} (API {version.api_level}) — "
+                     f"{version.variant.replace('_', ' ')} — "
+                     f"{_size_for(version)}")
+            if version.installed:
+                label += "  [installed]"
+            self.combo.addItem(label, version)
+        target = 0
+        for index, version in enumerate(versions):
+            if (version.api_level == state.api_level
+                    and version.variant == state.variant):
+                target = index
+                break
+        else:
+            for index, version in enumerate(versions):
+                if version.installed:
+                    target = index
+                    break
+            else:
+                for index, version in enumerate(versions):
+                    if version.api_level == 34:
+                        target = index
+                        break
+        self.combo.setCurrentIndex(target)
+        self.combo.blockSignals(False)
+        self._refresh_details()
+        self.completeChanged.emit()
+
+    def _refresh_details(self):
+        version = self.selected_version()
+        if version is None:
+            self.details.setText("")
+            return
+        name = ANDROID_VERSION_NAMES.get(version.api_level,
+                                         f"Android {version.api_level}")
+        self.details.setText(
+            f"{name} (API {version.api_level}), {version.variant}, "
+            f"{version.abi}. Download size {_size_for(version)}. "
+            f"{'Already installed.' if version.installed else 'Will be downloaded.'}")
+
+    def selected_version(self):
+        data = self.combo.currentData()
+        return data if isinstance(data, AndroidVersion) else None
+
+    def isComplete(self):
+        return self.selected_version() is not None
+
+    def validatePage(self):
+        version = self.selected_version()
+        if version is None:
+            return False
+        state = self.wizard().state
+        state.api_level = version.api_level
+        state.variant = version.variant
+        state.save()
+        return True
+
+    def _on_finished(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+
+
+class FinishPage(QWizardPage):
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Create the emulator")
+        self.setSubTitle("ApkPreview downloads the selected image if needed, "
+                         "creates its AVD, then finishes. The emulator is not "
+                         "started.")
+        self._worker = None
+        self._complete = False
+
+        layout = QVBoxLayout(self)
+        self.summary = QTextEdit()
+        self.summary.setReadOnly(True)
+        layout.addWidget(self.summary, 1)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        layout.addWidget(self.progress)
+        self.status = QLabel("Ready")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.btn_create = QPushButton("Create AVD and finish")
+        self.btn_create.clicked.connect(self.create_avd)
+        layout.addWidget(self.btn_create)
+
+    def initializePage(self):
+        state = self.wizard().state
+        preset = preset_manager.get_preset(state.device_key)
+        name = ANDROID_VERSION_NAMES.get(state.api_level,
+                                         f"Android {state.api_level}")
+        lines = [
+            f"SDK folder: {self.wizard().bootstrap.sdk_dir}",
+            f"Device: {preset.brand + ' ' + preset.name if preset else 'not chosen'}",
+            f"Android: {name} (API {state.api_level}, "
+            f"{state.variant or 'default'})",
+            f"Components: {', '.join(self.wizard().components)}",
+        ]
+        self.summary.setPlainText("\n".join(lines))
+        if state.completed:
+            self._complete = True
+            self.progress.setValue(100)
+            self.status.setText("Setup is already complete.")
+            self.btn_create.setEnabled(False)
+            self.completeChanged.emit()
+
+    def isComplete(self):
+        return self._complete
+
+    def create_avd(self):
+        if self._worker is not None and self._worker.isRunning():
+            return
+        state = self.wizard().state
+        version = AndroidVersion(
+            api_level=state.api_level, variant=state.variant or "default",
+            abi=PlatformUtils.get_image_abi())
+        if version.api_level <= 0:
+            QMessageBox.warning(self, "Android version",
+                                "Choose an Android version first.")
+            return
+
+        self.btn_create.setEnabled(False)
+        self.progress.setRange(0, 0)
+        self.status.setText("Preparing the system image and AVD...")
+        self._worker = AvdWorker(SDKManager(), version,
+                                 get_default_config_for_mode(
+                                     PerformanceMode.NORMAL))
+        self._worker.log.connect(self._append_log)
+        self._worker.done.connect(lambda ok, msg, avd:
+                                  self._on_done(ok, msg, avd, version))
+        self._worker.finished.connect(self._on_thread_finished)
+        self._worker.start()
+
+    def _append_log(self, line):
+        self.status.setText(line)
+
+    def _on_done(self, ok, message, avd_name, version):
+        self.progress.setRange(0, 100)
+        if ok:
+            self._complete = True
+            self.progress.setValue(100)
+            self.status.setText(f"{message} — AVD '{avd_name}' is ready.")
+            self.status.setStyleSheet("color: #4ec9b0;")
+            settings.sdk_path = self.wizard().bootstrap.sdk_dir
+            settings.select_android_version(
+                version.api_level, version.variant, avd_name)
+            settings.first_run_completed = True
+            self.wizard().state.completed = True
+            self.wizard().state.save()
+            self.completeChanged.emit()
+        else:
+            self.progress.setValue(0)
+            self.status.setText(f"Failed: {message}")
+            self.status.setStyleSheet("color: #e06060;")
+            self.btn_create.setEnabled(True)
+
+    def _on_thread_finished(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+
+
+# ---------------------------------------------------------------------------
+# Wizard
+# ---------------------------------------------------------------------------
+class SetupWizard(QWizard):
+    """Resumable nine-page setup wizard."""
+
+    def __init__(self, parent=None, force: bool = False):
         super().__init__(parent)
         self.setWindowTitle("ApkPreview Setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
-        self.setMinimumSize(600, 500)
+        self.resize(780, 640)
+        self.components = list(BASE_COMPONENTS)
 
-        # Set dark theme
-        self.setStyleSheet("""
-            QWizard {
-                background-color: #1e1e1e;
-            }
-            QLabel {
-                color: #cccccc;
-            }
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: 600;
-            }
-            QPushButton:hover { background-color: #005a9e; }
-            QPushButton:disabled { background-color: #3a3a3a; color: #888; }
-            QProgressBar {
-                border: 1px solid #3a3a3a;
-                border-radius: 4px;
-                background-color: #1e1e1e;
-                text-align: center;
-            }
-            QProgressBar::chunk { background-color: #007acc; border-radius: 3px; }
-            QComboBox, QLineEdit {
-                background-color: #252526;
-                border: 1px solid #3a3a3a;
-                border-radius: 4px;
-                padding: 4px 8px;
-                color: #cccccc;
-            }
-            QTextEdit {
-                background-color: #1e1e1e;
-                border: 1px solid #3a3a3a;
-                border-radius: 4px;
-                color: #d4d4d4;
-            }
-        """)
+        self.bootstrap = BootstrapManager()
+        if force:
+            self.bootstrap.state.reset()
+            self.bootstrap.state = SetupState.load()
+        self.state = self.bootstrap.state
 
         self.addPage(WelcomePage())
-        self.addPage(InstallPage())
-        self.addPage(AndroidVersionPage())
-        self.addPage(SettingsPage())
+        self.addPage(InstallTypePage())
+        self.addPage(SdkPage())
+        self.addPage(SystemCheckPage())
+        self.addPage(LicensePage())
+        self.addPage(DownloadPage())
+        self.addPage(DevicePage())
+        self.addPage(VersionPage())
+        self.addPage(FinishPage())
+
+        self.setStartId(min(max(int(self.state.step or 0), 0), 8))
+        self.currentIdChanged.connect(self._save_step)
+        self.finished.connect(self._on_finished)
 
         self.setButtonText(QWizard.WizardButton.NextButton, "Next >")
         self.setButtonText(QWizard.WizardButton.BackButton, "< Back")
         self.setButtonText(QWizard.WizardButton.CancelButton, "Cancel")
         self.setButtonText(QWizard.WizardButton.FinishButton, "Finish")
+        self.setStyleSheet(self._stylesheet())
 
-        self.finished.connect(self._on_finished)
+    @staticmethod
+    def _stylesheet() -> str:
+        return """
+            QWizard, QWizardPage { background-color: #1e1e1e; }
+            QLabel { color: #cccccc; }
+            QPushButton {
+                background-color: #007acc; color: white; border: none;
+                border-radius: 4px; padding: 7px 14px; font-weight: 600;
+            }
+            QPushButton:hover { background-color: #005a9e; }
+            QPushButton:disabled { background-color: #3a3a3a; color: #888; }
+            QProgressBar {
+                border: 1px solid #3a3a3a; border-radius: 4px;
+                background-color: #1e1e1e; text-align: center;
+            }
+            QProgressBar::chunk { background-color: #007acc; border-radius: 3px; }
+            QComboBox, QLineEdit {
+                background-color: #252526; border: 1px solid #3a3a3a;
+                border-radius: 4px; padding: 5px 8px; color: #cccccc;
+            }
+            QTextEdit {
+                background-color: #1e1e1e; border: 1px solid #3a3a3a;
+                border-radius: 4px; color: #d4d4d4;
+            }
+            QRadioButton, QCheckBox { color: #cccccc; }
+        """
+
+    def set_sdk_path(self, path: Path):
+        path = Path(path).expanduser()
+        settings.sdk_path = path
+        self.state.sdk_path = str(path)
+        self.state.save()
+        # Rebuild the manager against the chosen folder, keeping state.
+        state_path = self.bootstrap._state_path
+        self.bootstrap = BootstrapManager(sdk_dir=path, state_path=state_path)
+        self.bootstrap.state = self.state
+
+    def _save_step(self, page_id: int):
+        self.state.step = int(page_id)
+        self.state.save()
 
     def _on_finished(self, result: int):
         if result == QWizard.DialogCode.Accepted:
             settings.first_run_completed = True
+            self.state.completed = True
+            self.state.save()
 
     @staticmethod
     def run_if_needed(parent=None) -> bool:
-        """Run wizard if first run, return True if ready to proceed."""
-        if settings.get("first_run_completed", False):
+        """Open the wizard on first launch/missing components."""
+        if not needs_setup():
             return True
-
         wizard = SetupWizard(parent)
-        result = wizard.exec()
-        return result == QWizard.DialogCode.Accepted
+        return wizard.exec() == QWizard.DialogCode.Accepted

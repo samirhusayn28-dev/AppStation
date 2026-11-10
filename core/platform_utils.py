@@ -5,6 +5,7 @@ import sys
 import platform
 import subprocess
 import shutil
+import json
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -28,7 +29,25 @@ class PlatformUtils:
     
     @classmethod
     def get_sdk_dir(cls) -> Path:
-        """Get the Android SDK directory."""
+        """Get the Android SDK directory.
+
+        Resolution order: ``APKPREVIEW_SDK_DIR``, the ``sdk_path`` saved in
+        ``settings.json`` (chosen in the setup wizard), then the default
+        ``~/.apkpreview/sdk``.  The settings file is read directly to avoid a
+        circular import with :mod:`core.settings`.
+        """
+        env_path = os.environ.get("APKPREVIEW_SDK_DIR")
+        if env_path:
+            return Path(env_path).expanduser()
+        try:
+            settings_path = cls.get_settings_path()
+            if settings_path.exists():
+                data = json.loads(settings_path.read_text(encoding="utf-8"))
+                saved = data.get("sdk_path") or ""
+                if saved:
+                    return Path(saved).expanduser()
+        except (OSError, ValueError, TypeError):
+            pass
         return cls.get_app_data_dir() / "sdk"
     
     @classmethod
