@@ -79,13 +79,18 @@ class _ReplaceDialog(QDialog):
         layout.addWidget(old_label)
 
         old_size = old.estimate_size_gb()
-        free_after = max(0.0, free_gb + old_size)
+        new_size = new.estimate_size_gb()
+        net_change = old_size - new_size
+        free_after = max(0.0, free_gb + net_change)
         info = QLabel(
-            f"This frees about {old_size:.1f} GB. Apps and snapshots inside "
-            f"the old version's emulator will be deleted.\n\n"
+            f"The old version's system image and its emulator AVD (apps and "
+            f"snapshots inside it) will be deleted only after the new version "
+            f"is installed and its AVD is ready.\n\n"
+            f"Removing the old version frees about {old_size:.1f} GB; the new "
+            f"download uses about {new_size:.1f} GB "
+            f"(net change {net_change:+.1f} GB).\n\n"
             f"Free disk space: {free_gb:.1f} GB now, about "
-            f"{free_after:.1f} GB after removing the old version "
-            f"(download: about {new.estimate_size_gb():.1f} GB).")
+            f"{free_after:.1f} GB after replacement.")
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -428,6 +433,11 @@ class AndroidVersionsDialog(QDialog):
             go, remove_old = self._confirm_replace(old, version)
             if not go:
                 return
+            # Deleting the old image/AVD while *any* emulator is running is
+            # unsafe, even when the running AVD is a different version.
+            if remove_old and self._emulator_running():
+                self._refuse_running()
+                return
 
         free_gb = self._free_gb()
         needed_gb = version.estimate_size_gb()
@@ -485,6 +495,11 @@ class AndroidVersionsDialog(QDialog):
             go, remove_old = self._confirm_replace(old, version)
             if not go:
                 return
+            # Deleting the old image/AVD while *any* emulator is running is
+            # unsafe, even when the running AVD is a different version.
+            if remove_old and self._emulator_running():
+                self._refuse_running()
+                return
 
         def task(report, cancel):
             report(-1, f"Preparing {version.version_name}...")
@@ -512,7 +527,9 @@ class AndroidVersionsDialog(QDialog):
     def _remove_version(self, version: AndroidVersion):
         if version is None or not version.installed or self._busy:
             return
-        if self._version_is_running(version):
+        # Refuse while any emulator is running: the emulator may hold the
+        # image or AVD files open even if it is not the selected version.
+        if self._emulator_running():
             self._refuse_running()
             return
         if not self._confirm_remove(version):

@@ -236,18 +236,33 @@ class SDKManager:
         return found
 
     def delete_avd(self, name: str) -> Tuple[bool, str]:
-        """Delete an AVD directory and its .ini pointer."""
+        """Delete an AVD directory and its .ini pointer.
+
+        Returns ``False`` if either the directory or the pointer is still
+        present afterwards, so callers can report a real cleanup failure
+        instead of silently claiming success.
+        """
         avd_dir = self._find_avd_dir(name)
         if avd_dir is None:
             return True, f"AVD '{name}' not found"
+        ini = avd_dir.with_suffix(".ini")
+        errors: List[str] = []
+        removed_dir = False
         try:
-            shutil.rmtree(avd_dir, ignore_errors=True)
-            ini = avd_dir.with_suffix(".ini")
-            if ini.exists():
-                ini.unlink()
-            return True, f"AVD '{name}' deleted"
-        except Exception as e:
-            return False, f"Failed to delete AVD '{name}': {e}"
+            shutil.rmtree(avd_dir)
+            removed_dir = True
+        except OSError as exc:
+            errors.append(f"folder: {exc}")
+        if removed_dir:
+            try:
+                if ini.exists():
+                    ini.unlink()
+            except OSError as exc:
+                errors.append(f"pointer: {exc}")
+        if avd_dir.exists() or ini.exists():
+            detail = "; ".join(errors) or "files are still present"
+            return False, f"Failed to delete AVD '{name}': {detail}"
+        return True, f"AVD '{name}' deleted"
 
     def find_legacy_avd(self) -> Optional[Tuple[str, AndroidVersion]]:
         """The pre-existing ``apkpreview_default`` AVD, if still present."""
@@ -564,9 +579,13 @@ class SDKManager:
             return False, message, None
 
         if old_version is not None:
-            ok, message = self.remove_version(old_version)
-            if not ok:
-                return False, message, avd_name
+            removed, message = self.remove_version(old_version)
+            if not removed:
+                # The new version is fully usable; report the cleanup problem
+                # as a warning instead of pretending the install failed.
+                return True, (f"Installed {version.version_name}; "
+                              f"could not fully remove the old version: "
+                              f"{message}"), avd_name
 
         return True, f"Installed {version.version_name}", avd_name
 
@@ -575,28 +594,53 @@ class SDKManager:
         """Delete a version's app-managed AVD(s) and (optionally) its image.
 
         Only AVDs named :data:`APP_AVD_PREFIX` are ever deleted, so any AVD the
-        user created themselves is left completely untouched.
+        user created themselves is left completely untouched.  Returns
+        ``False`` if any requested deletion failed; the message lists every
+        action that was attempted.
         """
         messages: List[str] = []
+        all_ok = True
 
         for name in self.list_avds_for_version(version):
             if not name.startswith(APP_AVD_PREFIX):
                 continue
             ok, message = self.delete_avd(name)
+            all_ok = all_ok and ok
             messages.append(message)
 
         if remove_image:
             ok, message = self.uninstall_system_image(version)
+            all_ok = all_ok and ok
             messages.append(message)
 
-        return True, "; ".join(messages)
+        return all_ok, "; ".join(messages)
+
+    def _jdk_home(self) -> Optional[Path]:
+        """Locate the private JDK installed by the setup wizard, if present."""
+        base = PlatformUtils.get_app_data_dir() / "jdk"
+        if not base.is_dir():
+            return None
+        try:
+            for name in ("java", "java.exe"):
+                for java in base.rglob(f"bin/{name}"):
+                    if java.is_file():
+                        return java.parent.parent
+        except OSError:
+            return None
+        return None
 
     def _sdkmanager_env(self) -> dict:
-        return {
-            **os.environ,
-            "PATH": (str(self._sdk_dir / "platform-tools") + os.pathsep
-                     + os.environ.get("PATH", "")),
-        }
+        env = os.environ.copy()
+        env["PATH"] = (str(self._sdk_dir / "platform-tools") + os.pathsep
+                       + env.get("PATH", ""))
+        # A packaged app may have no system Java.  The wizard downloads a
+        # private JDK under ~/.apkpreview/jdk; sdkmanager/avdmanager must use
+        # it explicitly because their launcher scripts do not search there.
+        jdk_home = self._jdk_home()
+        if jdk_home is not None:
+            env["JAVA_HOME"] = str(jdk_home)
+            env["PATH"] = str(jdk_home / "bin") + os.pathsep + env["PATH"]
+        return env
 
     def install_system_image(self, version: AndroidVersion,
                              on_line: Optional[Callable[[str], None]] = None,
@@ -686,8 +730,13 @@ class SDKManager:
             return False, "sdkmanager not found"
         try:
             result = PlatformUtils.run_command(
-                [str(sdkmanager), "--uninstall", version.package], timeout=300)
+                [str(sdkmanager), "--uninstall", version.package],
+                env=self._sdkmanager_env(), timeout=300)
             if result.returncode == 0:
+                if self.is_system_image_installed(
+                        version.abi, version.api_level, version.variant):
+                    return False, (f"sdkmanager reported success but "
+                                   f"{version.package} is still present")
                 return True, f"Removed {version.package}"
             stderr_lines = (result.stderr or "").strip().split("\n")[-20:]
             return False, "Uninstall failed:\n" + "\n".join(stderr_lines)
@@ -869,7 +918,7 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env={**os.environ, "PATH": str(self._sdk_dir / "platform-tools") + os.pathsep + os.environ.get("PATH", "")}
+                env=self._sdkmanager_env()
             )
 
             if result.returncode == 0:
@@ -968,7 +1017,7 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                env={**os.environ, "PATH": str(self._sdk_dir / "platform-tools") + os.pathsep + os.environ.get("PATH", "")}
+                env=self._sdkmanager_env()
             )
             if result.returncode == 0 and f"Name: {name}" in result.stdout:
                 if not force:
@@ -987,7 +1036,7 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=180,
-                env={**os.environ, "PATH": str(self._sdk_dir / "platform-tools") + os.pathsep + os.environ.get("PATH", "")}
+                env=self._sdkmanager_env()
             )
 
             if result.returncode == 0:
