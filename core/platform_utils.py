@@ -283,6 +283,24 @@ class PlatformUtils:
         
         return result
     
+
+    @classmethod
+    def get_hypervisor_guidance(cls) -> str:
+        """Return user-facing guidance about hypervisor availability."""
+        info = cls.check_virtualization()
+        if info["supported"]:
+            return info["message"]
+        steps = []
+        if not info["hyper_v"] and not info["whpx"]:
+            steps.append("Enable Hyper-V or WHPX via Windows Features (Control Panel > Programs > Turn Windows features on or off)")
+        if not info["aehd_driver"]:
+            steps.append("Install the Android Emulator Hypervisor Driver (AEHD) if available for your hardware")
+        if not info["firmware_virtualization"]:
+            steps.append("Ensure virtualization is enabled in BIOS/UEFI settings")
+        if steps:
+            return "Hardware virtualization not detected.\n" + "\n".join(steps)
+        return info["message"]
+
     @classmethod
     def check_virtualization_macos(cls) -> dict:
         """Check virtualization support on macOS (Hypervisor.framework/HVF)."""
