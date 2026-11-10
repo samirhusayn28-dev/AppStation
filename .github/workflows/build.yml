@@ -1,0 +1,103 @@
+name: Build ApkPreview
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact: ApkPreview-windows
+            python: '3.11'
+          - os: macos-13
+            name: macOS Intel
+            artifact: ApkPreview-macos-intel
+            python: '3.11'
+          - os: macos-latest
+            name: macOS Apple Silicon
+            artifact: ApkPreview-macos-arm64
+            python: '3.11'
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --clean --noconfirm \
+            --name ApkPreview \
+            --windowed \
+            --add-data "core:core" \
+            --add-data "ui:ui" \
+            main.py
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: |
+          # Create NSIS installer
+          choco install nsis --version 3.09
+          makensis installer.nsi
+          # Also zip the portable exe
+          7z a ${{ matrix.artifact }}.zip dist/ApkPreview/
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: |
+          # Create DMG
+          hdiutil create -volname "ApkPreview" -srcfolder dist/ApkPreview.app -ov -format UDZO ${{ matrix.artifact }}.dmg
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            *.zip
+            *.dmg
+          retention-days: 30
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/ApkPreview-windows/*.zip
+            artifacts/ApkPreview-macos-intel/*.dmg
+            artifacts/ApkPreview-macos-arm64/*.dmg
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
