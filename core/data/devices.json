@@ -1,0 +1,1937 @@
+{
+  "version": 1,
+  "note": "Bundled ApkPreview device definitions. Density is computed at load time from the resolution with a ppi/dp rule (see core/device_presets.py). Apple entries are viewport/frame previews only: the Android emulator cannot run iOS apps.",
+  "devices": [
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone SE (1st gen)",
+      "width_px": 640,
+      "height_px": 1136,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 6",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 6s",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 7",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 8",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone SE (2nd gen)",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone SE (3rd gen)",
+      "width_px": 750,
+      "height_px": 1334,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 6 Plus",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 6s Plus",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 7 Plus",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 8 Plus",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone X",
+      "width_px": 1125,
+      "height_px": 2436,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone XS",
+      "width_px": 1125,
+      "height_px": 2436,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 11 Pro",
+      "width_px": 1125,
+      "height_px": 2436,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone XS Max",
+      "width_px": 1242,
+      "height_px": 2688,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 11 Pro Max",
+      "width_px": 1242,
+      "height_px": 2688,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone XR",
+      "width_px": 828,
+      "height_px": 1792,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 11",
+      "width_px": 828,
+      "height_px": 1792,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 12 mini",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 13 mini",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 12",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 12 Pro",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 13",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 13 Pro",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 14",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 16e",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 17e",
+      "width_px": 1170,
+      "height_px": 2532,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 12 Pro Max",
+      "width_px": 1284,
+      "height_px": 2778,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 13 Pro Max",
+      "width_px": 1284,
+      "height_px": 2778,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 14 Plus",
+      "width_px": 1284,
+      "height_px": 2778,
+      "cutout": "notch",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 14 Pro",
+      "width_px": 1179,
+      "height_px": 2556,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 15",
+      "width_px": 1179,
+      "height_px": 2556,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 15 Pro",
+      "width_px": 1179,
+      "height_px": 2556,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 16",
+      "width_px": 1179,
+      "height_px": 2556,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 14 Pro Max",
+      "width_px": 1290,
+      "height_px": 2796,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 15 Plus",
+      "width_px": 1290,
+      "height_px": 2796,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 15 Pro Max",
+      "width_px": 1290,
+      "height_px": 2796,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 16 Plus",
+      "width_px": 1290,
+      "height_px": 2796,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 16 Pro",
+      "width_px": 1206,
+      "height_px": 2622,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 17",
+      "width_px": 1206,
+      "height_px": 2622,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 17 Pro",
+      "width_px": 1206,
+      "height_px": 2622,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 18 Pro",
+      "width_px": 1206,
+      "height_px": 2622,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 16 Pro Max",
+      "width_px": 1320,
+      "height_px": 2868,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 17 Pro Max",
+      "width_px": 1320,
+      "height_px": 2868,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone 18 Pro Max",
+      "width_px": 1320,
+      "height_px": 2868,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "iPhone Air",
+      "width_px": 1260,
+      "height_px": 2736,
+      "cutout": "dynamic-island",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Phone",
+      "name": "Foldable iPhone (rumored)",
+      "width_px": 1920,
+      "height_px": 2713,
+      "cutout": "none",
+      "preview_only": true,
+      "rumored": true,
+      "inner": {
+        "width_px": 1920,
+        "height_px": 2713,
+        "cutout": "none"
+      },
+      "outer": {
+        "width_px": 1422,
+        "height_px": 2088,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (5th gen)",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (6th gen)",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 2",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad mini 4",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad mini 5",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 9.7\"",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (7th gen)",
+      "width_px": 1620,
+      "height_px": 2160,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (8th gen)",
+      "width_px": 1620,
+      "height_px": 2160,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (9th gen)",
+      "width_px": 1620,
+      "height_px": 2160,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (10th gen)",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad (11th gen)",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 4",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 5",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 11\" (M2)",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 11\" (M3)",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 11\" (M4)",
+      "width_px": 1640,
+      "height_px": 2360,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 3",
+      "width_px": 1668,
+      "height_px": 2224,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 10.5\"",
+      "width_px": 1668,
+      "height_px": 2224,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad mini 6",
+      "width_px": 1488,
+      "height_px": 2266,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad mini 7",
+      "width_px": 1488,
+      "height_px": 2266,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (1st gen)",
+      "width_px": 1668,
+      "height_px": 2388,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (2nd gen)",
+      "width_px": 1668,
+      "height_px": 2388,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (3rd gen)",
+      "width_px": 1668,
+      "height_px": 2388,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (4th gen)",
+      "width_px": 1668,
+      "height_px": 2388,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (M4)",
+      "width_px": 1668,
+      "height_px": 2420,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 11\" (M5)",
+      "width_px": 1668,
+      "height_px": 2420,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 13\" (M2)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 13\" (M3)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Air 13\" (M4)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (1st gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (2nd gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "home-button",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (3rd gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (4th gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (5th gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 12.9\" (6th gen)",
+      "width_px": 2048,
+      "height_px": 2732,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 13\" (M4)",
+      "width_px": 2064,
+      "height_px": 2752,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Apple",
+      "category": "Tablet",
+      "name": "iPad Pro 13\" (M5)",
+      "width_px": 2064,
+      "height_px": 2752,
+      "cutout": "none",
+      "preview_only": true
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S",
+      "width_px": 480,
+      "height_px": 800,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S II",
+      "width_px": 480,
+      "height_px": 800,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S III",
+      "width_px": 720,
+      "height_px": 1280,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S4",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S5",
+      "width_px": 1080,
+      "height_px": 1920,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S6",
+      "width_px": 1440,
+      "height_px": 2560,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S6 edge",
+      "width_px": 1440,
+      "height_px": 2560,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S6 edge+",
+      "width_px": 1440,
+      "height_px": 2560,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S7",
+      "width_px": 1440,
+      "height_px": 2560,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S7 edge",
+      "width_px": 1440,
+      "height_px": 2560,
+      "cutout": "bezel"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S8",
+      "width_px": 1440,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S8+",
+      "width_px": 1440,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S9",
+      "width_px": 1440,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S9+",
+      "width_px": 1440,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S10e",
+      "width_px": 1080,
+      "height_px": 2280,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S10",
+      "width_px": 1440,
+      "height_px": 3040,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S10+",
+      "width_px": 1440,
+      "height_px": 3040,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S10 5G",
+      "width_px": 1440,
+      "height_px": 3040,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S10 Lite",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S20 FE",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S21",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S21+",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S20",
+      "width_px": 1440,
+      "height_px": 3200,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S20+",
+      "width_px": 1440,
+      "height_px": 3200,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S20 Ultra",
+      "width_px": 1440,
+      "height_px": 3200,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S21 Ultra",
+      "width_px": 1440,
+      "height_px": 3200,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S21 FE",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S22",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S22+",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S23",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S23+",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S23 FE",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S24",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S24 FE",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S25",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S25 FE",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S26",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S22 Ultra",
+      "width_px": 1440,
+      "height_px": 3088,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S23 Ultra",
+      "width_px": 1440,
+      "height_px": 3088,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S24+",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S24 Ultra",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S25+",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S25 Ultra",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S25 Edge",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S26+",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Phone",
+      "name": "Galaxy S26 Ultra",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Fold",
+      "width_px": 1536,
+      "height_px": 2152,
+      "cutout": "notch",
+      "inner": {
+        "width_px": 1536,
+        "height_px": 2152,
+        "cutout": "notch"
+      },
+      "outer": {
+        "width_px": 720,
+        "height_px": 1680,
+        "cutout": "notch"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold2",
+      "width_px": 1768,
+      "height_px": 2208,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1768,
+        "height_px": 2208,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 816,
+        "height_px": 2260,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold3",
+      "width_px": 1768,
+      "height_px": 2208,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1768,
+        "height_px": 2208,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 832,
+        "height_px": 2268,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold4",
+      "width_px": 1812,
+      "height_px": 2176,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1812,
+        "height_px": 2176,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 904,
+        "height_px": 2316,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold5",
+      "width_px": 1812,
+      "height_px": 2176,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1812,
+        "height_px": 2176,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 904,
+        "height_px": 2316,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold6",
+      "width_px": 1856,
+      "height_px": 2160,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1856,
+        "height_px": 2160,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 968,
+        "height_px": 2376,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold7",
+      "width_px": 1968,
+      "height_px": 2184,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1968,
+        "height_px": 2184,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2520,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold8",
+      "width_px": 1848,
+      "height_px": 2448,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1848,
+        "height_px": 2448,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1248,
+        "height_px": 1972,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Fold8 Ultra",
+      "width_px": 2504,
+      "height_px": 2256,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 2504,
+        "height_px": 2256,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2520,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip",
+      "width_px": 1080,
+      "height_px": 2636,
+      "cutout": "notch",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2636,
+        "cutout": "notch"
+      },
+      "outer": {
+        "width_px": 112,
+        "height_px": 300,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip 5G",
+      "width_px": 1080,
+      "height_px": 2636,
+      "cutout": "notch",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2636,
+        "cutout": "notch"
+      },
+      "outer": {
+        "width_px": 112,
+        "height_px": 300,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip3",
+      "width_px": 1080,
+      "height_px": 2640,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2640,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 260,
+        "height_px": 512,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip4",
+      "width_px": 1080,
+      "height_px": 2640,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2640,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 260,
+        "height_px": 512,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip5",
+      "width_px": 1080,
+      "height_px": 2640,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2640,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 720,
+        "height_px": 748,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip6",
+      "width_px": 1080,
+      "height_px": 2640,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2640,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 720,
+        "height_px": 748,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip7 FE",
+      "width_px": 1080,
+      "height_px": 2520,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2520,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 720,
+        "height_px": 748,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip7",
+      "width_px": 1080,
+      "height_px": 2520,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2520,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 948,
+        "height_px": 1048,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Foldable",
+      "name": "Galaxy Z Flip8",
+      "width_px": 1080,
+      "height_px": 2520,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1080,
+        "height_px": 2520,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 948,
+        "height_px": 1048,
+        "cutout": "none"
+      }
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S2",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S3",
+      "width_px": 1536,
+      "height_px": 2048,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S 8.4\"",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S 10.5\"",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S4",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S5e",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "home-button"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S6",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S7",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S8",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S9",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S11 10.5\"",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S11 11\"",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S6 Lite",
+      "width_px": 1200,
+      "height_px": 2000,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S7+",
+      "width_px": 1752,
+      "height_px": 2800,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S8+",
+      "width_px": 1752,
+      "height_px": 2800,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S9+",
+      "width_px": 1752,
+      "height_px": 2800,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S10+",
+      "width_px": 1752,
+      "height_px": 2800,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S7 FE",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S8 Ultra",
+      "width_px": 1848,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S9 Ultra",
+      "width_px": 1848,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S10 Ultra",
+      "width_px": 1848,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S11 Ultra",
+      "width_px": 1848,
+      "height_px": 2960,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S9 FE",
+      "width_px": 1440,
+      "height_px": 2304,
+      "cutout": "none"
+    },
+    {
+      "brand": "Samsung",
+      "category": "Tablet",
+      "name": "Galaxy Tab S10 FE",
+      "width_px": 1440,
+      "height_px": 2304,
+      "cutout": "none"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 4 XL",
+      "width_px": 1440,
+      "height_px": 3040,
+      "cutout": "none"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 4a",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 4a 5G",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 5",
+      "width_px": 1080,
+      "height_px": 2340,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 5a",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 6",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 6a",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 7",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 7a",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 8",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 8a",
+      "width_px": 1080,
+      "height_px": 2400,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 6 Pro",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 7 Pro",
+      "width_px": 1440,
+      "height_px": 3120,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 8 Pro",
+      "width_px": 1344,
+      "height_px": 2992,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 9",
+      "width_px": 1080,
+      "height_px": 2424,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 9a",
+      "width_px": 1080,
+      "height_px": 2424,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 10",
+      "width_px": 1080,
+      "height_px": 2424,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 10a",
+      "width_px": 1080,
+      "height_px": 2424,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 11",
+      "width_px": 1080,
+      "height_px": 2424,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 9 Pro",
+      "width_px": 1280,
+      "height_px": 2856,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 10 Pro",
+      "width_px": 1280,
+      "height_px": 2856,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 11 Pro",
+      "width_px": 1280,
+      "height_px": 2856,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 9 Pro XL",
+      "width_px": 1344,
+      "height_px": 2992,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 10 Pro XL",
+      "width_px": 1344,
+      "height_px": 2992,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Phone",
+      "name": "Pixel 11 Pro XL",
+      "width_px": 1344,
+      "height_px": 2992,
+      "cutout": "punch-hole"
+    },
+    {
+      "brand": "Google",
+      "category": "Foldable",
+      "name": "Pixel Fold",
+      "width_px": 1840,
+      "height_px": 2208,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 1840,
+        "height_px": 2208,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2092,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Google",
+      "category": "Foldable",
+      "name": "Pixel 9 Pro Fold",
+      "width_px": 2076,
+      "height_px": 2152,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 2076,
+        "height_px": 2152,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2424,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Google",
+      "category": "Foldable",
+      "name": "Pixel 10 Pro Fold",
+      "width_px": 2076,
+      "height_px": 2152,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 2076,
+        "height_px": 2152,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2364,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Google",
+      "category": "Foldable",
+      "name": "Pixel 11 Pro Fold",
+      "width_px": 2076,
+      "height_px": 2152,
+      "cutout": "punch-hole",
+      "inner": {
+        "width_px": 2076,
+        "height_px": 2152,
+        "cutout": "punch-hole"
+      },
+      "outer": {
+        "width_px": 1080,
+        "height_px": 2342,
+        "cutout": "punch-hole"
+      }
+    },
+    {
+      "brand": "Google",
+      "category": "Tablet",
+      "name": "Pixel Tablet",
+      "width_px": 1600,
+      "height_px": 2560,
+      "cutout": "none"
+    }
+  ]
+}

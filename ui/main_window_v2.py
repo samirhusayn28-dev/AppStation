@@ -24,6 +24,7 @@ from .drop_zone import DropZone
 from .logcat_panel import LogcatPanel
 from .screen_view import ScreenView
 from .device_window import DeviceWindow
+from .device_picker import pick_device
 from .android_versions_dialog import AndroidVersionsDialog
 from core.platform_utils import PlatformUtils
 from core.sdk_manager import SDKManager, ANDROID_VERSION_NAMES
@@ -32,8 +33,7 @@ from core.emulator import EmulatorManager
 from core.adb import ADB, detect_package_and_activity
 from core.scrcpy import ScrcpyManager
 from core.apk_parser import get_apk_info
-from core.device_presets import (preset_manager, DEFAULT_PRESET_KEY,
-                                 load_avdmanager_presets)
+from core.device_presets import preset_manager, CATEGORY_FOLDABLE
 from core.file_watcher import create_file_watcher
 from core.screen_stream import ScreenStream
 from core.settings import settings
@@ -212,23 +212,6 @@ class APKParseWorker(QThread):
         self.parsed.emit(self._path, info)
 
 
-class DevicePresetWorker(QThread):
-    """Load the avdmanager device list off the UI thread.
-
-    Emits ``None`` when avdmanager is missing/fails so the built-in presets
-    stay in place.
-    """
-
-    loaded = pyqtSignal(object)  # dict[key, DevicePreset] or None
-
-    def run(self):
-        try:
-            presets = load_avdmanager_presets()
-        except Exception:
-            presets = None
-        self.loaded.emit(presets)
-
-
 class EmulatorWorker(QThread):
     """Run blocking emulator start/stop/restart off the UI thread."""
 
@@ -345,7 +328,7 @@ class MainWindowV2(QMainWindow):
         self._install_worker: Optional[APKInstallWorker] = None
         self._emu_worker: Optional[EmulatorWorker] = None
         self._parse_worker: Optional[APKParseWorker] = None
-        self._preset_worker: Optional[DevicePresetWorker] = None
+        self._device_screen: str = "inner"
         self._adb_workers: list = []
         # Guards use a real adb probe (worker thread), so block re-entry while
         # one is in flight.
@@ -360,7 +343,6 @@ class MainWindowV2(QMainWindow):
         self._setup_ui()
         self._connect_signals()
         self._populate_presets()
-        self._load_device_presets()
         self._profile_mode()
         self._load_controls_settings()
         self._update_emulator_buttons(self._emulator.is_running())
@@ -422,6 +404,11 @@ class MainWindowV2(QMainWindow):
         self.combo_device.setMinimumWidth(120)
         self.combo_device.addItem("Default Device")
         row.addWidget(self.combo_device)
+
+        self.btn_search_device = QPushButton("Search...")
+        self.btn_search_device.setToolTip(
+            "Search all bundled Apple, Samsung and Google devices")
+        row.addWidget(self.btn_search_device)
 
         self.btn_rotate = QPushButton("Rotate")
         row.addWidget(self.btn_rotate)
@@ -561,12 +548,41 @@ class MainWindowV2(QMainWindow):
         add_button("Uninstall", 3, 2, attr="btn_app_uninstall")
         add_button("Clear data", 3, 3, attr="btn_app_clear")
 
-        # Row 4 - Device preset (own row)
+        # Row 4 - Device preset (own row) + search + fold toggle + note
         section("Device", 4)
+        device_box = QWidget()
+        device_layout = QVBoxLayout(device_box)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(4)
+
+        device_row = QHBoxLayout()
+        device_row.setContentsMargins(0, 0, 0, 0)
+        device_row.setSpacing(6)
         self.combo_preset = QComboBox()
         self.combo_preset.setMinimumWidth(120)
         self.combo_preset.addItem("Default Device")
-        grid.addWidget(self.combo_preset, 4, 1, 1, 4)
+        device_row.addWidget(self.combo_preset, 1)
+
+        self.btn_pick_device = QPushButton("Search...")
+        self.btn_pick_device.setToolTip(
+            "Search all bundled Apple, Samsung and Google devices")
+        self.btn_pick_device.setSizePolicy(QSizePolicy.Policy.Minimum,
+                                           QSizePolicy.Policy.Fixed)
+        device_row.addWidget(self.btn_pick_device)
+
+        self.lbl_fold = QLabel("Screen")
+        device_row.addWidget(self.lbl_fold)
+        self.combo_fold = QComboBox()
+        self.combo_fold.addItem("Inner", "inner")
+        self.combo_fold.addItem("Cover", "outer")
+        self.combo_fold.setMinimumWidth(80)
+        device_row.addWidget(self.combo_fold)
+        device_layout.addLayout(device_row)
+
+        self.lbl_device_note = QLabel("")
+        self.lbl_device_note.setWordWrap(True)
+        device_layout.addWidget(self.lbl_device_note)
+        grid.addWidget(device_box, 4, 1, 1, 5)
 
         # Row 5 - Device rotate + reset (one tight row, trailing stretch)
         rotate_row = QWidget()
@@ -711,6 +727,9 @@ class MainWindowV2(QMainWindow):
         # Device preset (toolbar + Controls combos, kept in sync)
         self.combo_device.currentIndexChanged.connect(self._on_preset_combo_changed)
         self.combo_preset.currentIndexChanged.connect(self._on_preset_combo_changed)
+        self.btn_search_device.clicked.connect(self._on_search_device)
+        self.btn_pick_device.clicked.connect(self._on_search_device)
+        self.combo_fold.currentIndexChanged.connect(self._on_fold_screen_changed)
 
         # Rotate
         self.btn_rotate.clicked.connect(self._on_rotate_cycle)
@@ -741,35 +760,43 @@ class MainWindowV2(QMainWindow):
         # NOTE: the status-row timer is wired in __init__; nothing else is left.
 
     def _populate_presets(self):
-        """Fill both combos with presets grouped by category.
+        """Fill both combos with the bundled list grouped Brand > Category.
 
-        Section headers (Phone / Tablet / Foldable) are non-selectable.  If the
-        saved preset no longer exists, fall back to the default preset.
+        Brand and category rows are non-selectable headers.  The first row is a
+        "no preset" reset entry.  If the saved preset no longer exists (for
+        example an old avdmanager key), the combo falls back to no preset.
         """
-        groups = preset_manager.get_grouped_presets()
-        available = {key for _cat, items in groups for key, _p in items}
         current = settings.device_preset
-        if current not in available:
-            if DEFAULT_PRESET_KEY in available:
-                current = DEFAULT_PRESET_KEY
-            else:
-                current = next(iter(available), "")
+        if current not in preset_manager.get_all_presets():
+            current = ""
 
         for combo in (self.combo_device, self.combo_preset):
             combo.blockSignals(True)
             try:
                 combo.clear()
-                for category, items in groups:
-                    combo.addItem(f"\u2014 {category} \u2014", None)
+                combo.addItem("No preset (emulator default)", "")
+                for brand, categories in preset_manager.get_brand_groups():
+                    combo.addItem(f"\u2014 {brand} \u2014", None)
                     self._make_header_non_selectable(combo,
                                                      combo.count() - 1)
-                    for key, preset in items:
-                        combo.addItem(preset.name, key)
-                idx = combo.findData(current)
+                    for category, items in categories:
+                        combo.addItem(f"   {category}", None)
+                        self._make_header_non_selectable(combo,
+                                                         combo.count() - 1)
+                        for key, preset in items:
+                            label = preset.name
+                            if preset.rumored:
+                                label += "  (rumored)"
+                            elif preset.preview_only:
+                                label += "  (viewport)"
+                            combo.addItem(label, key)
+                idx = combo.findData(current) if current else 0
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
             finally:
                 combo.blockSignals(False)
+
+        self._update_fold_controls(settings.device_preset)
 
     @staticmethod
     def _make_header_non_selectable(combo, index: int):
@@ -779,39 +806,50 @@ class MainWindowV2(QMainWindow):
         if item is not None:
             item.setFlags(Qt.ItemFlag.NoItemFlags)
 
-    def _load_device_presets(self):
-        """Show cached presets now, then refresh the list from avdmanager.
+    def _update_fold_controls(self, key: str):
+        """Show the Inner / Cover toggle only for a selected foldable."""
+        preset = preset_manager.get_preset(key) if key else None
+        foldable = bool(preset is not None and preset.is_foldable)
+        if hasattr(self, "combo_fold"):
+            self.combo_fold.setVisible(foldable)
+        if hasattr(self, "lbl_fold"):
+            self.lbl_fold.setVisible(foldable)
+        if foldable and hasattr(self, "combo_fold"):
+            self.combo_fold.blockSignals(True)
+            self.combo_fold.setCurrentIndex(
+                1 if self._device_screen == "outer" else 0)
+            self.combo_fold.blockSignals(False)
+        if hasattr(self, "lbl_device_note"):
+            self.lbl_device_note.setText(self._device_note(preset))
 
-        The avdmanager call runs on a worker thread; on success the combos are
-        rebuilt with the live device list, on failure they are left as they are.
-        """
-        try:
-            if preset_manager.load_cache():
-                self._populate_presets()
-        except Exception:
-            pass
-        try:
-            worker = DevicePresetWorker(self)
-            worker.loaded.connect(self._on_device_presets_loaded)
-            worker.finished.connect(self._discard_preset_worker)
-            self._preset_worker = worker
-            worker.start()
-        except Exception:
-            self._preset_worker = None
+    @staticmethod
+    def _device_note(preset) -> str:
+        if preset is None:
+            return ("Pick a bundled device. Apple entries are viewport/frame "
+                    "previews only - the emulator cannot run iOS apps.")
+        if preset.preview_only:
+            return ("Apple viewport/frame preview only: the Android emulator "
+                    "can use this resolution, but it cannot run iOS apps.")
+        if preset.rumored:
+            return ("Rumored/unconfirmed device - specifications may change. "
+                    "Use Inner / Cover to switch screens.")
+        if preset.is_foldable:
+            return ("Foldable - use Inner / Cover to switch screens.")
+        return (f"{preset.brand} {preset.category} - {preset.size_str} @ "
+                f"{preset.density} dpi - {preset.cutout_label}")
 
-    @pyqtSlot(object)
-    def _on_device_presets_loaded(self, presets):
-        """Adopt the avdmanager-provided device list (worker finished)."""
-        if not presets:
+    def _on_search_device(self):
+        """Open the searchable Brand > Category device picker."""
+        key = pick_device(self, settings.device_preset)
+        if not key:
             return
-        preset_manager.set_dynamic_presets(presets)
-        self._populate_presets()
-
-    def _discard_preset_worker(self):
-        worker = self._preset_worker
-        self._preset_worker = None
-        if worker is not None:
-            worker.deleteLater()
+        for combo in (self.combo_device, self.combo_preset):
+            idx = combo.findData(key)
+            if idx >= 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+        self._on_preset_selected(key)
 
     def _sync_preset_combos(self, key: str, source):
         """Mirror the selected preset into the other combo without re-firing."""
@@ -836,28 +874,67 @@ class MainWindowV2(QMainWindow):
         self._on_preset_selected(key)
 
     @pyqtSlot(str)
-    def _on_preset_selected(self, name: str):
-        """Apply a device preset (size + density). Copied from the old window."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+    def _on_preset_selected(self, key: str):
+        """Select a device; apply its viewport when the emulator is running."""
+        preset = preset_manager.get_preset(key)
+        if preset is None:
             return
 
-        self._set_status(f"Applying preset {name}...")
-        self._run_adb(
-            lambda: preset_manager.apply_preset(self._adb, name),
-            on_done=lambda ok, msg: self._on_preset_applied(name, ok, msg))
+        settings.device_preset = key
+        self._update_fold_controls(key)
+        screen = self._device_screen if preset.is_foldable else "inner"
 
-    @pyqtSlot(str, bool, str)
-    def _on_preset_applied(self, name: str, success: bool, message: str):
-        preset = preset_manager.get_preset(name)
-        if success and preset is not None:
-            settings.device_preset = name
-            # Show the device name and its resolution in the status row.
+        if not self._emulator.is_running():
+            note = " - viewport preview only" if preset.preview_only else ""
             self._set_status(
-                f"Applied preset: {preset.name} "
-                f"({preset.size_str} @ {preset.density} dpi)")
+                f"Selected {preset.brand} {preset.name}{note}; "
+                f"start the emulator to apply")
+            return
+
+        self._set_status(f"Applying {preset.name}...")
+        self._run_adb(
+            lambda: preset_manager.apply_preset(self._adb, key, screen),
+            on_done=lambda ok, msg: self._on_preset_applied(
+                key, screen, ok, msg))
+
+    @pyqtSlot(str, str, bool, str)
+    def _on_preset_applied(self, key: str, screen: str, success: bool,
+                           message: str):
+        preset = preset_manager.get_preset(key)
+        if success and preset is not None:
+            settings.device_preset = key
+            spec = preset.screen(screen)
+            suffix = ""
+            if preset.preview_only:
+                suffix = " (viewport preview only - no iOS apps)"
+            elif preset.is_foldable:
+                suffix = f" ({screen} screen)"
+            self._set_status(
+                f"Applied {preset.brand} {preset.name}: "
+                f"{spec.size_str} @ {spec.density} dpi{suffix}")
         else:
             self._set_status(message)
+
+    @pyqtSlot(int)
+    def _on_fold_screen_changed(self, index: int):
+        """Switch a foldable between its inner and cover screens."""
+        self._device_screen = "outer" if index == 1 else "inner"
+        key = settings.device_preset
+        preset = preset_manager.get_preset(key)
+        if preset is None or not preset.is_foldable:
+            return
+        screen = self._device_screen
+        if not self._emulator.is_running():
+            spec = preset.screen(screen)
+            self._set_status(
+                f"{preset.name}: {screen} screen selected "
+                f"({spec.size_str}); start the emulator to apply")
+            return
+        self._set_status(f"Switching {preset.name} to {screen} screen...")
+        self._run_adb(
+            lambda: preset_manager.apply_preset(self._adb, key, screen),
+            on_done=lambda ok, msg: self._on_preset_applied(
+                key, screen, ok, msg))
 
     # ------------------------------------------------------------------
     # State helpers

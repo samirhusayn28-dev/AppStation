@@ -7,14 +7,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.hardware_profile import HardwareProfiler, PerformanceMode, EmulatorConfig
 from core.device_presets import (DevicePreset, DevicePresetManager,
-                                 BUILTIN_PRESETS, parse_avdmanager_devices,
-                                 save_devices_cache, load_devices_cache)
+                                 BUILTIN_PRESETS, CATEGORY_ORDER,
+                                 compute_density, load_bundled_devices,
+                                 preset_manager)
 from core.platform_utils import PlatformUtils
 from core.settings import Settings
 
 
-# Trimmed, representative ``avdmanager list device`` output (phones, tablets,
-# foldables, plus TV / Wear / Automotive entries that must be skipped).
+# Trimmed, representative ``avdmanager list device`` output retained only as a
+# regression fixture: Phase 1 removed avdmanager from the preset pipeline.
 SAMPLE_AVDMANAGER = """Available devices definitions:
 id: 0 or "pixel_7"
     Name: Pixel 7
@@ -110,115 +111,128 @@ class TestHardwareProfile(unittest.TestCase):
 
 
 class TestDevicePresets(unittest.TestCase):
-    """Tests for device preset management."""
-    
-    def test_builtin_presets_exist(self):
-        """Test that built-in presets are defined."""
-        self.assertIn("pixel7", BUILTIN_PRESETS)
-        self.assertIn("iphone_14", BUILTIN_PRESETS)
-        self.assertIn("tablet_10", BUILTIN_PRESETS)
-        self.assertIn("default", BUILTIN_PRESETS)
-    
-    def test_preset_properties(self):
-        """Test preset properties."""
-        preset = BUILTIN_PRESETS["pixel7"]
-        self.assertEqual(preset.width, 1080)
-        self.assertEqual(preset.height, 2400)
-        self.assertEqual(preset.density, 420)
-        self.assertEqual(preset.size_str, "1080x2400")
-    
-    def test_preset_manager(self):
-        """Test preset manager."""
+    """Tests for the bundled Brand > Category device presets."""
+
+    def test_bundled_data_is_complete(self):
+        """The bundled file contains exactly the requested device families."""
+        self.assertEqual(len(BUILTIN_PRESETS), 202)
+        counts = {}
+        for preset in BUILTIN_PRESETS.values():
+            counts[(preset.brand, preset.category)] = \
+                counts.get((preset.brand, preset.category), 0) + 1
+        self.assertEqual(counts[("Apple", "Phone")], 47)
+        self.assertEqual(counts[("Apple", "Tablet")], 37)
+        self.assertEqual(counts[("Samsung", "Phone")], 46)
+        self.assertEqual(counts[("Samsung", "Tablet")], 24)
+        self.assertEqual(counts[("Samsung", "Foldable")], 18)
+        self.assertEqual(counts[("Google", "Phone")], 25)
+        self.assertEqual(counts[("Google", "Tablet")], 1)
+        self.assertEqual(counts[("Google", "Foldable")], 4)
+
+        # The old hand-written/avdmanager keys are gone.
+        for old_key in ("pixel7", "iphone_14", "tablet_10", "default"):
+            self.assertNotIn(old_key, BUILTIN_PRESETS)
+
+    def test_required_fields_and_cutouts(self):
+        """Every entry has the required fields and a known cutout."""
+        for preset in BUILTIN_PRESETS.values():
+            self.assertTrue(preset.name)
+            self.assertIn(preset.brand, ("Apple", "Samsung", "Google"))
+            self.assertIn(preset.category, CATEGORY_ORDER)
+            self.assertGreater(preset.width, 0)
+            self.assertGreater(preset.height, 0)
+            self.assertGreater(preset.density, 0)
+            self.assertIn(preset.cutout,
+                          ("home-button", "notch", "dynamic-island",
+                           "punch-hole", "none", "bezel"))
+
+    def test_apple_preview_only_and_rumored(self):
+        """Apple entries are viewport previews; the foldable is rumored."""
+        iphone = preset_manager.get_preset("apple_iphone_15_pro")
+        self.assertIsNotNone(iphone)
+        self.assertEqual((iphone.width, iphone.height), (1179, 2556))
+        self.assertEqual(iphone.cutout, "dynamic-island")
+        self.assertTrue(iphone.preview_only)
+        self.assertEqual(iphone.density, 480)
+
+        fold = preset_manager.get_preset("apple_foldable_iphone_rumored")
+        self.assertIsNotNone(fold)
+        self.assertTrue(fold.rumored)
+        self.assertTrue(fold.is_foldable)
+        self.assertEqual(fold.inner.size_str, "1920x2713")
+        self.assertEqual(fold.outer.size_str, "1422x2088")
+        self.assertEqual(fold.outer.cutout, "punch-hole")
+
+    def test_foldables_have_inner_and_outer(self):
+        """Every foldable exposes both screens and the fold toggle."""
+        foldables = [p for p in BUILTIN_PRESETS.values() if p.is_foldable]
+        self.assertEqual(len(foldables), 23)  # 18 Samsung + 4 Google + 1 Apple
+        for preset in foldables:
+            self.assertIsNotNone(preset.inner)
+            self.assertIsNotNone(preset.outer)
+            self.assertEqual(preset.screen("inner"), preset.inner)
+            self.assertEqual(preset.screen("outer"), preset.outer)
+            self.assertGreater(preset.outer.width, 0)
+
+        fold7 = preset_manager.get_preset("samsung_galaxy_z_fold7")
+        self.assertEqual(fold7.inner.size_str, "1968x2184")
+        self.assertEqual(fold7.outer.size_str, "1080x2520")
+
+    def test_density_is_computed_from_resolution(self):
+        """The ppi/dp rule yields sensible Android density buckets."""
+        self.assertEqual(compute_density(1170, 2532, "Phone", "Apple"), 480)
+        self.assertEqual(compute_density(750, 1334, "Phone", "Apple"), 320)
+        self.assertEqual(compute_density(1080, 2400, "Phone", "Google"), 440)
+        self.assertEqual(compute_density(1440, 3120, "Phone", "Samsung"), 520)
+        self.assertEqual(compute_density(1600, 2560, "Tablet", "Samsung"), 280)
+        self.assertEqual(compute_density(1812, 2176, "Foldable", "Samsung",
+                                         "inner"), 360)
+
+    def test_brand_and_category_grouping(self):
+        """Groups are Brand > Category in the requested order."""
+        groups = preset_manager.get_brand_groups()
+        self.assertEqual([brand for brand, _ in groups],
+                         ["Apple", "Samsung", "Google"])
+        samsung = dict(groups[1][1])
+        self.assertEqual(list(samsung.keys()),
+                         ["Phone", "Tablet", "Foldable"])
+        self.assertEqual(len(samsung["Foldable"]), 18)
+
+    def test_search(self):
+        """Search matches model, brand, category, resolution and cutout."""
+        names = [p.name for p in preset_manager.search("iphone 15")]
+        self.assertIn("iPhone 15 Pro", names)
+        self.assertIn("iPhone 15 Pro Max", names)
+
+        self.assertTrue(preset_manager.search("fold7"))
+        self.assertTrue(all("fold7" in p.search_text
+                            for p in preset_manager.search("fold7")))
+        self.assertGreater(len(preset_manager.search("punch-hole")), 50)
+        self.assertEqual(preset_manager.search("definitely-not-a-device"), [])
+
+    def test_manager_custom_presets(self):
+        """User-added presets still work alongside the bundled list."""
         manager = DevicePresetManager()
-        
-        # Get built-in
-        preset = manager.get_preset("pixel7")
-        self.assertIsNotNone(preset)
-        self.assertEqual(preset.name, "Pixel 7")
-        
-        # Add custom
-        manager.add_custom_preset("Custom Phone", 800, 1600, 320, "My custom phone")
+        manager.add_custom_preset("Custom Phone", 800, 1600, 320)
         custom = manager.get_preset("custom_phone")
         self.assertIsNotNone(custom)
         self.assertEqual(custom.width, 800)
         self.assertTrue(manager.is_custom("custom_phone"))
-        
-        # Remove custom
         manager.remove_custom_preset("custom_phone")
         self.assertIsNone(manager.get_preset("custom_phone"))
 
-    def test_avdmanager_parsing_groups_and_excludes(self):
-        """avdmanager output is parsed and categorized; TV/Wear/Auto dropped."""
-        presets = parse_avdmanager_devices(SAMPLE_AVDMANAGER)
+    def test_bundled_file_roundtrip(self):
+        """Loading the bundled file again produces the same set."""
+        loaded = load_bundled_devices()
+        self.assertEqual(set(loaded), set(BUILTIN_PRESETS))
 
-        self.assertIn("pixel_7", presets)
-        self.assertIn("medium_tablet", presets)
-        self.assertIn("6.7in Foldable", presets)
-        self.assertIn("Nexus 10", presets)
+    def test_avdmanager_pipeline_removed(self):
+        """Phase 1 removed the avdmanager parser and ~/.apkpreview cache."""
+        import core.device_presets as dp
+        for removed in ("load_avdmanager_presets", "parse_avdmanager_devices",
+                        "save_devices_cache", "load_devices_cache"):
+            self.assertFalse(hasattr(dp, removed), removed)
 
-        # Excluded categories.
-        self.assertNotIn("tv_1080p", presets)
-        self.assertNotIn("wearos_small_round", presets)
-        self.assertNotIn("automotive_1024p_landscape", presets)
-        self.assertFalse([k for k in presets if "wear" in k.lower()])
-
-        # Resolution/density come from the detail output when present.
-        phone = presets["pixel_7"]
-        self.assertEqual(phone.category, "Phone")
-        self.assertEqual((phone.width, phone.height, phone.density),
-                         (1080, 2400, 420))
-
-        tablet = presets["medium_tablet"]
-        self.assertEqual(tablet.category, "Tablet")
-        self.assertEqual((tablet.width, tablet.height, tablet.density),
-                         (1600, 2560, 320))
-
-        # Known-spec fallback for a device without a resolution line.
-        self.assertEqual(presets["Nexus 10"].category, "Tablet")
-        self.assertEqual(presets["Nexus 10"].width, 2560)
-
-        foldable = presets["6.7in Foldable"]
-        self.assertEqual(foldable.category, "Foldable")
-        self.assertEqual(foldable.width, 1080)
-
-    def test_avdmanager_compact_fallback(self):
-        """The ``-c`` list alone still yields category-filtered presets."""
-        compact = "pixel_7\nwearos_round\ntv_4k\nmedium_tablet\n"
-        presets = parse_avdmanager_devices("", compact)
-        self.assertIn("pixel_7", presets)
-        self.assertIn("medium_tablet", presets)
-        self.assertNotIn("tv_4k", presets)
-        self.assertNotIn("wearos_round", presets)
-
-    def test_grouped_presets_order_and_default(self):
-        """Combos are grouped Phone/Tablet/Foldable and always keep Default."""
-        manager = DevicePresetManager()
-        manager.set_dynamic_presets(
-            parse_avdmanager_devices(SAMPLE_AVDMANAGER))
-
-        groups = manager.get_grouped_presets()
-        self.assertEqual([category for category, _ in groups],
-                         ["Phone", "Tablet", "Foldable"])
-        keys = {key for _cat, items in groups for key, _p in items}
-        self.assertIn("default", keys)  # built-in default is always present
-
-    def test_devices_cache_roundtrip(self):
-        """Parsed presets round-trip through ``~/.apkpreview/devices.json``."""
-        import tempfile
-        from unittest import mock
-
-        presets = parse_avdmanager_devices(SAMPLE_AVDMANAGER)
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(PlatformUtils, "get_app_data_dir",
-                                   return_value=Path(tmp)):
-                self.assertTrue(save_devices_cache(presets))
-                self.assertTrue((Path(tmp) / "devices.json").exists())
-                loaded = load_devices_cache()
-
-            self.assertIsNotNone(loaded)
-            self.assertIn("pixel_7", loaded)
-            self.assertEqual(loaded["pixel_7"].width, 1080)
-            self.assertEqual(loaded["medium_tablet"].category, "Tablet")
 
 
 class TestPlatformUtils(unittest.TestCase):
