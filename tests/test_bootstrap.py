@@ -57,13 +57,12 @@ class TestSetupState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "setup_state.json"
             state = SetupState(step=5, install_type="custom",
-                               sdk_path="/tmp/sdk", device_key="google_pixel_8",
+                               sdk_path="/tmp/sdk",
                                api_level=34, components_done=["jdk"])
             self.assertTrue(state.save(path))
             loaded = SetupState.load(path)
             self.assertEqual(loaded.step, 5)
             self.assertEqual(loaded.install_type, "custom")
-            self.assertEqual(loaded.device_key, "google_pixel_8")
             self.assertEqual(loaded.components_done, ["jdk"])
 
             loaded.reset(path)

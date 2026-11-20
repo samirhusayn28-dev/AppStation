@@ -1,4 +1,4 @@
-"""ADB wrapper for ApkPreview - install, launch, shell commands, device management."""
+"""ADB wrapper for AppStation - install, launch, shell commands, device management."""
 
 import subprocess
 import time
@@ -141,6 +141,25 @@ class ADB:
         if result.returncode == 0:
             return True, "Key event sent"
         return False, result.stderr.strip() or result.stdout.strip()
+
+    def input_touch(self, x: float, y: float) -> Tuple[bool, str]:
+        """Send a touch tap at screen coordinates (adb shell input tap x y)."""
+        result = self._run(
+            ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=10)
+        if result.returncode == 0:
+            return True, f"Tap at {int(x)},{int(y)} sent"
+        return False, result.stderr.strip() or result.stdout.strip()
+
+    def input_swipe(self, x1: float, y1: float, x2: float, y2: float,
+                    duration_ms: int = 300) -> Tuple[bool, str]:
+        """Send a swipe gesture (adb shell input swipe x1 y1 x2 y2 duration)."""
+        result = self._run(
+            ["shell", "input", "swipe",
+             str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)),
+             str(int(duration_ms))], timeout=10)
+        if result.returncode == 0:
+            return True, f"Swipe ({int(x1)},{int(y1)})->({int(x2)},{int(y2)}) sent"
+        return False, result.stderr.strip() or result.stdout.strip()
     
     def get_package_info(self, package: str) -> Optional[Dict]:
         """Get package info (version, path, etc.)."""
@@ -183,7 +202,7 @@ class ADB:
         result = self.shell("wm size")
         if result[0]:
             output = result[1]
-            # Check for override size first (when preset applied)
+            # Check for override size first (when an override is active)
             if "Override size:" in output:
                 size_str = output.split("Override size:")[1].strip()
             elif "Physical size:" in output:
@@ -210,7 +229,7 @@ class ADB:
         result = self.shell("wm density")
         if result[0]:
             output = result[1]
-            # Check for override density first (when preset applied)
+            # Check for override density first (when an override is active)
             if "Override density:" in output:
                 density_str = output.split("Override density:")[1].strip()
             elif "Physical density:" in output:
@@ -223,6 +242,13 @@ class ADB:
                 pass
         return None
     
+    def shell_checked(self, command: str, timeout: int = 15) -> Tuple[bool, str]:
+        """Run a shell command and include stderr in the returned message."""
+        result = self._run(["shell", command], timeout=timeout)
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        return result.returncode == 0, output
+
+
     def set_rotation(self, rotation: int) -> Tuple[bool, str]:
         """Set screen rotation (0, 1, 2, 3 for 0°, 90°, 180°, 270°)."""
         if rotation not in (0, 1, 2, 3):

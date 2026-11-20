@@ -1,4 +1,4 @@
-"""File watcher for ApkPreview - monitors APK file changes for auto-reinstall."""
+"""File watcher for AppStation - monitors APK file changes for auto-reinstall."""
 
 import time
 import threading

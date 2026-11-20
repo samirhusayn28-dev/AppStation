@@ -1,4 +1,4 @@
-name: Build ApkPreview
+name: Build AppStation
 
 on:
   push:
@@ -12,20 +12,24 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
             name: Windows
-            artifact: ApkPreview-windows
-            python: '3.11'
+            artifact: AppStation-windows
+            spec: AppStation.win.spec
+            python: '3.12'
           - os: macos-13
             name: macOS Intel
-            artifact: ApkPreview-macos-intel
-            python: '3.11'
+            artifact: AppStation-macos-intel
+            spec: AppStation.spec
+            python: '3.12'
           - os: macos-latest
             name: macOS Apple Silicon
-            artifact: ApkPreview-macos-arm64
-            python: '3.11'
+            artifact: AppStation-macos-arm64
+            spec: AppStation.spec
+            python: '3.12'
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -43,41 +47,39 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
 
       - name: Build with PyInstaller
-        run: |
-          pyinstaller --clean --noconfirm \
-            --name ApkPreview \
-            --windowed \
-            --add-data "core:core" \
-            --add-data "ui:ui" \
-            main.py
+        run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
 
       - name: Package Windows
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          # Create NSIS installer
-          choco install nsis --version 3.09
+          choco install nsis -y --no-progress
+          $env:Path += ";C:\Program Files\NSIS"
           makensis installer.nsi
-          # Also zip the portable exe
-          7z a ${{ matrix.artifact }}.zip dist/ApkPreview/
+          Compress-Archive -Path dist\AppStation\* -DestinationPath AppStation-windows-portable.zip -Force
 
       - name: Package macOS
         if: runner.os == 'macOS'
         run: |
-          # Create DMG
-          hdiutil create -volname "ApkPreview" -srcfolder dist/ApkPreview.app -ov -format UDZO ${{ matrix.artifact }}.dmg
+          hdiutil create -volname "AppStation" \
+            -srcfolder dist/AppStation.app -ov -format UDZO ${{ matrix.artifact }}.dmg
+          python install.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
+            *.exe
             *.zip
             *.dmg
+            *.pkg
           retention-days: 30
+          if-no-files-found: error
 
   release:
     needs: build
@@ -91,13 +93,18 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/ApkPreview-windows/*.zip
-            artifacts/ApkPreview-macos-intel/*.dmg
-            artifacts/ApkPreview-macos-arm64/*.dmg
+          tag_name: ${{ github.ref_name }}
+          name: AppStation ${{ github.ref_name }}
           generate_release_notes: true
+          files: |
+            artifacts/AppStation-windows/AppStation-Setup-1.0.0.exe
+            artifacts/AppStation-windows/AppStation-windows-portable.zip
+            artifacts/AppStation-macos-intel/*.dmg
+            artifacts/AppStation-macos-intel/*.pkg
+            artifacts/AppStation-macos-arm64/*.dmg
+            artifacts/AppStation-macos-arm64/*.pkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

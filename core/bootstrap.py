@@ -5,7 +5,7 @@ This module is the single downloader/checker used by:
 * the first-run setup wizard (``ui/setup_wizard.py``),
 * the version-replacement flow (through :class:`core.sdk_manager.SDKManager`),
 * the Windows installer's optional "Download Android requirements" step
-  (``ApkPreview.exe --bootstrap``).
+  (``AppStation.exe --bootstrap``).
 
 It never starts the emulator.  Every network operation has a progress
 callback, retries, an optional cancel event, and SHA verification where the
@@ -119,7 +119,6 @@ class SetupState:
     jdk_path: str = ""
     licenses_accepted: bool = False
     components_done: List[str] = field(default_factory=list)
-    device_key: str = ""
     api_level: int = 0
     variant: str = "default"
     completed: bool = False
@@ -362,7 +361,7 @@ class BootstrapManager:
             "Android SDK License Agreement",
             "",
             "By continuing you accept the Android SDK License Agreement for "
-            "the packages ApkPreview downloads:",
+            "the packages AppStation downloads:",
             "",
         ]
         for name, url in ANDROID_LICENSES:
@@ -372,7 +371,7 @@ class BootstrapManager:
             "The full legal text is available at the URLs above. sdkmanager "
             "records your acceptance in the SDK's licenses directory.",
             "",
-            "If you do not accept, ApkPreview cannot download the Android "
+            "If you do not accept, AppStation cannot download the Android "
             "command-line tools, platform-tools, emulator or system images.",
         ])
         return "\n".join(lines)

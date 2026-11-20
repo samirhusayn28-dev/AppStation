@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure real emulator performance for ApkPreview.
+"""Measure real emulator performance for AppStation.
 
 This is a benchmark, not a test: it starts the local emulator, waits for
 ``sys.boot_completed``, samples the emulator process tree, and stops it again.

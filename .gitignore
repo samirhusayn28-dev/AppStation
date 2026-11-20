@@ -7,8 +7,18 @@ __pycache__/
 # Build output
 build/
 dist/
-*.spec
 *.egg-info/
+
+# PyInstaller specs are build source; keep the two release specs.
+*.spec
+!AppStation.spec
+!AppStation.win.spec
+
+# Packaged release artifacts (published on GitHub Releases, not in git)
+*.dmg
+*.pkg
+*.exe
+*.zip
 
 # Test / tool caches
 .pytest_cache/

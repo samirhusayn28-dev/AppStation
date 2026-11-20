@@ -1,17 +1,15 @@
-"""UI modules for ApkPreview."""
+"""UI modules for AppStation.
 
-from .main_window import MainWindow
-from .drop_zone import DropZone
-from .controls_panel import ControlsPanel
-from .logcat_panel import LogcatPanel
-from .resource_meter import ResourceMeter
-from .setup_wizard import SetupWizard
+The package __init__ is deliberately tiny: it must not pull in the heavy
+window modules, because ``ui.loading_screen`` is imported *before* the main
+window during startup.  Import the concrete modules directly instead.
+"""
 
 __all__ = [
-    "MainWindow",
-    "DropZone",
-    "ControlsPanel",
-    "LogcatPanel",
-    "ResourceMeter",
-    "SetupWizard",
+    "android_versions_dialog",
+    "loading_screen",
+    "logcat_panel",
+    "main_window_v2",
+    "screen_view",
+    "setup_wizard",
 ]

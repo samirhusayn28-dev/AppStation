@@ -1,56 +1,37 @@
-; ApkPreview NSIS Installer Script
-; Generates a standard Windows installer
+; NSIS installer for AppStation 1.0.0 (Windows)
+; Produces AppStation-Setup-1.0.0.exe from the PyInstaller onedir build.
 
-!define APP_NAME "ApkPreview"
-!define APP_VERSION "0.1.0"
-!define APP_PUBLISHER "ApkPreview Contributors"
-!define APP_URL "https://github.com/yourusername/apkpreview"
-!define APP_EXE "ApkPreview.exe"
+!define APP_NAME "AppStation"
+!define APP_VERSION "1.0.0"
+!define APP_PUBLISHER "Samir Husayn"
+!define APP_URL "https://github.com/samirhusayn28-dev/AppStation"
+!define APP_EXE "AppStation.exe"
 
-; Include Modern UI
-!include "MUI2.nsh"
-
-; General settings
 Name "${APP_NAME} ${APP_VERSION}"
-OutFile "ApkPreview-Setup-${APP_VERSION}.exe"
+OutFile "AppStation-Setup-${APP_VERSION}.exe"
 InstallDir "$LOCALAPPDATA\${APP_NAME}"
-InstallDirRegKey HKCU "Software\${APP_NAME}" ""
+InstallDirRegKey HKCU "Software\${APP_NAME}" "InstallLocation"
 RequestExecutionLevel user
 
-; Modern UI pages
+SetCompressor /SOLID lzma
+
+!include "MUI2.nsh"
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
-!insertmacro MUI_UNPAGE_WELCOME
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
-!insertmacro MUI_UNPAGE_FINISH
-
-; Languages
 !insertmacro MUI_LANGUAGE "English"
 
-; Custom functions
-Function .onInit
-  ; Check if running and offer to close
-  FindWindow $0 "${APP_NAME}" "" $HWNDPARENT
-  StrCmp $0 0 +3
-    MessageBox MB_OKCANCEL "${APP_NAME} is running. Please close it before installing." IDOK +2
-    Abort
-FunctionEnd
-
-Section "MainSection" SEC01
+Section "Install" SEC01
   SetOutPath "$INSTDIR"
-  
-  ; Copy all files from dist/ApkPreview
-  File /r "dist\ApkPreview\*"
-  
-  ; Create uninstaller
+  File /r "dist\AppStation\*.*"
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  
-  ; Registry for uninstall
+
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
     "DisplayName" "${APP_NAME} ${APP_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
@@ -63,27 +44,32 @@ Section "MainSection" SEC01
     "URLInfoAbout" "${APP_URL}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" \
     "InstallLocation" "$INSTDIR"
-  
-  ; Start Menu shortcuts
+  WriteRegStr HKCU "Software\${APP_NAME}" "InstallLocation" "$INSTDIR"
+
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-  
-  ; Desktop shortcut (optional)
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 SectionEnd
 
 Section "Uninstall"
-  ; Remove files
-  RMDir /r "$INSTDIR"
-  
-  ; Remove shortcuts
-  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
-  Delete "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\${APP_NAME}"
-  Delete "$DESKTOP\${APP_NAME}.lnk"
-  
-  ; Remove registry
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
-  DeleteRegKey HKCU "Software\${APP_NAME}"
+  MessageBox MB_YESNO|MB_ICONQUESTION \
+    "Keep AppStation data in %LOCALAPPDATA%\.apkpreview?" IDYES keep_data IDNO remove_data
+
+  keep_data:
+    Goto remove_app
+
+  remove_data:
+    RMDir /r "$LOCALAPPDATA\.apkpreview"
+
+  remove_app:
+    Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+    Delete "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk"
+    RMDir "$SMPROGRAMS\${APP_NAME}"
+    Delete "$DESKTOP\${APP_NAME}.lnk"
+    Delete "$INSTDIR\uninstall.exe"
+    RMDir /r "$INSTDIR"
+
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+    DeleteRegKey HKCU "Software\${APP_NAME}"
 SectionEnd

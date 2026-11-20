@@ -1,4 +1,4 @@
-"""Android SDK Manager for ApkPreview - handles cmdline-tools, platform-tools, emulator, system images."""
+"""Android SDK Manager for AppStation - handles cmdline-tools, platform-tools, emulator, system images."""
 
 import os
 import re
@@ -9,7 +9,6 @@ import tarfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Optional, List, Tuple
-import requests
 from .platform_utils import PlatformUtils
 from .hardware_profile import PerformanceMode, EmulatorConfig
 from .settings import settings
@@ -844,6 +843,7 @@ class SDKManager:
             self._report_progress(step, 0, 100, "Downloading...")
             dest.parent.mkdir(parents=True, exist_ok=True)
 
+            import requests  # lazy: keeps startup fast
             response = requests.get(url, stream=True, timeout=300)
             response.raise_for_status()
 
@@ -1128,6 +1128,7 @@ class SDKManager:
         # Get latest scrcpy release URL
         try:
             api_url = "https://api.github.com/repos/Genymobile/scrcpy/releases/latest"
+            import requests  # lazy: keeps startup fast
             response = requests.get(api_url, timeout=30)
             release = response.json()
 

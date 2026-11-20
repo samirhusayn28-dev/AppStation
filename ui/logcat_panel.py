@@ -1,6 +1,7 @@
-"""Logcat panel for ApkPreview - live log streaming with filtering."""
+"""Logcat panel for AppStation - live log streaming with filtering."""
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
+                             QTabWidget, 
                              QLineEdit, QComboBox, QCheckBox, QPushButton, 
                              QLabel, QFileDialog, QMenu)
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QThread, pyqtSlot
@@ -123,8 +124,15 @@ class LogcatPanel(QWidget):
         self._auto_scroll = True
         self._paused = False
         self._search_text = ""
-        self._max_lines = 5000
+        self._max_lines = 2000
+        self._pending = []
+        self._max_pending = 1000
         self._setup_ui()
+        # Flush the queued lines at most 10 times a second.
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(100)
+        self._flush_timer.timeout.connect(self._flush_log)
+        self._flush_timer.start()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -307,36 +315,70 @@ class LogcatPanel(QWidget):
     
     @pyqtSlot(str, str)
     def _append_log(self, line: str, level: str):
-        """Append a log line to the view."""
+        """Queue a log line.
+
+        Lines are *queued* and flushed to the text view on a timer, so a
+        chatty guest cannot flood the GUI thread.  While the Logcat tab is
+        hidden the lines are dropped entirely: the view is not visible, so
+        there is nothing to draw.
+        """
         if self._paused:
             return
-        
+        if not self._is_visible():
+            return
+
         # Check search filter
         if self._search_text and self._search_text not in line.lower():
             return
-        
-        # Trim old lines
+
+        self._pending.append((line, level))
+        # Keep the queue bounded so a burst cannot grow without limit.
+        if len(self._pending) > self._max_pending:
+            del self._pending[:len(self._pending) - self._max_pending]
+
+    def _is_visible(self) -> bool:
+        """True when the Logcat tab is actually on screen."""
+        try:
+            if self.isVisible():
+                widget = self
+                while widget is not None:
+                    if isinstance(widget, QTabWidget):
+                        index = widget.indexOf(self)
+                        if index >= 0 and widget.currentIndex() != index:
+                            return False
+                    widget = widget.parentWidget()
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _flush_log(self):
+        """Write the queued lines to the text view (called on a timer)."""
+        if not self._pending:
+            return
+        batch, self._pending = self._pending, []
+        if self._paused:
+            return
+
         doc = self.log_view.document()
-        if doc.blockCount() > self._max_lines:
-            cursor = QTextCursor(doc)
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            cursor.movePosition(QTextCursor.MoveOperation.Down, 
-                              QTextCursor.MoveMode.KeepAnchor, 
-                              doc.blockCount() - self._max_lines)
-            cursor.removeSelectedText()
-        
-        # Append with color
         cursor = self.log_view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        
-        fmt = self._formats.get(level, self._formats["verbose"])
-        cursor.insertText(line + "\n", fmt)
-        
-        # Auto scroll
+        for line, level in batch:
+            fmt = self._formats.get(level, self._formats["verbose"])
+            cursor.insertText(line + "\n", fmt)
+
+        # Trim old lines (cap the buffer).
+        if doc.blockCount() > self._max_lines:
+            trim = QTextCursor(doc)
+            trim.movePosition(QTextCursor.MoveOperation.Start)
+            trim.movePosition(QTextCursor.MoveOperation.Down,
+                              QTextCursor.MoveMode.KeepAnchor,
+                              doc.blockCount() - self._max_lines)
+            trim.removeSelectedText()
+
         if self._auto_scroll:
             self.log_view.ensureCursorVisible()
-        
-        # Update line count
+
         self.lbl_line_count.setText(f"{doc.blockCount()} lines")
     
     @pyqtSlot(str)

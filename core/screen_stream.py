@@ -1,4 +1,4 @@
-"""Embedded screen streaming for ApkPreview (Stage 2a - view only).
+"""Embedded screen streaming for AppStation (Stage 2a - view only).
 
 Streams the device screen into the app using the scrcpy *server* driven
 directly over adb.  The macOS scrcpy client is never downloaded, installed or
@@ -11,7 +11,7 @@ Pipeline
 2. Kill any stale scrcpy app_process and drop all adb forward rules.
 3. ``adb push`` the jar to ``/data/local/tmp/scrcpy-server.jar`` on *every*
    start, then verify with ``adb shell ls -l`` that it exists and its size
-   matches the local file (the remote jar is never deleted by ApkPreview).
+   matches the local file (the remote jar is never deleted by AppStation).
 4. ``adb forward tcp:<port> localabstract:scrcpy``.
 5. Start the server with ``app_process`` using ``raw_stream=true`` so the video
    socket carries a raw H.264 Annex-B stream (no scrcpy framing at all).
@@ -33,6 +33,7 @@ line reports received / decoded / painted / dropped counts and the average
 decode / convert / paint milliseconds.
 """
 
+import struct
 import subprocess
 import threading
 import time
@@ -44,12 +45,27 @@ from PyQt6.QtGui import QImage
 
 from .adb import ADB
 from .platform_utils import PlatformUtils
+from .scrcpy import ScrcpyController
 from .settings import settings
 
-try:  # PyAV is optional at import time so the app still starts without it.
-    import av
-except Exception:  # pragma: no cover - exercised only on broken installs
-    av = None
+# PyAV is imported lazily: the decoder is only needed once a stream actually
+# starts, and importing the binary module costs ~0.2 s at app startup.
+_av = None
+_av_import_failed = False
+
+
+def _get_av():
+    """Import PyAV on first use; returns None when it is unavailable."""
+    global _av, _av_import_failed
+    if _av is not None or _av_import_failed:
+        return _av
+    try:
+        import av  # noqa: PLC0415 - deliberately lazy
+        _av = av
+    except Exception:  # pragma: no cover - exercised only on broken installs
+        _av_import_failed = True
+        _av = None
+    return _av
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +81,9 @@ REMOTE_SERVER_PATH = "/data/local/tmp/scrcpy-server.jar"
 ABSTRACT_SOCKET_NAME = "scrcpy"
 
 FALLBACK_INTERVAL = 1.0 / 3.0  # ~3 fps for the screencap fallback
+# How long the guest may stay silent before the video stream is considered
+# stalled and the screencap fallback takes over.
+STALL_TIMEOUT = 12.0
 MAX_STREAM_FPS = 30            # hard cap for the embedded view
 
 
@@ -123,7 +142,7 @@ class ScrcpyServer:
             import urllib.request
 
             request = urllib.request.Request(
-                SCRCPY_SERVER_URL, headers={"User-Agent": "ApkPreview"})
+                SCRCPY_SERVER_URL, headers={"User-Agent": "AppStation"})
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 total = int(response.headers.get("Content-Length") or 0)
                 received = 0
@@ -147,7 +166,7 @@ class ScrcpyServer:
     @staticmethod
     def is_available() -> bool:
         """True when PyAV is importable (the decoder we rely on)."""
-        return av is not None
+        return _get_av() is not None
 
 
 def _video_frame_to_qimage(frame) -> Optional[QImage]:
@@ -199,6 +218,39 @@ class _SocketFile:
         return False
 
 
+def _raw_screencap_to_qimage(data: bytes) -> Optional[QImage]:
+    """Convert a raw ``adb exec-out screencap`` buffer into a QImage.
+
+    The raw format is a 12-byte header (width, height, format as little
+    endian uint32) followed by the raw pixels.  RGBA_8888 needs a copy
+    because the buffer is not aligned the way QImage expects.
+    """
+    try:
+        if len(data) < 12:
+            return None
+        width, height, fmt = struct.unpack_from("<III", data, 0)
+        if width <= 0 or height <= 0 or width > 8192 or height > 8192:
+            return None
+        pixels = data[12:]
+        if fmt == 1:  # RGBA_8888
+            expected = width * height * 4
+            if len(pixels) < expected:
+                return None
+            image = QImage(pixels, width, height, width * 4,
+                           QImage.Format.Format_RGBA8888)
+            return image.copy()
+        if fmt == 2:  # RGBX_8888
+            expected = width * height * 4
+            if len(pixels) < expected:
+                return None
+            image = QImage(pixels, width, height, width * 4,
+                           QImage.Format.Format_RGBX8888)
+            return image.copy()
+    except Exception:
+        return None
+    return None
+
+
 def _free_tcp_port() -> int:
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -226,6 +278,8 @@ class ScreenStream:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._sock = None
+        self._control_sock = None
+        self._controller: Optional["ScrcpyController"] = None
         self._server_proc = None
         self._log_thread: Optional[threading.Thread] = None
         self._forward_port: Optional[int] = None
@@ -233,6 +287,13 @@ class ScreenStream:
         # connection error, so a final connect failure can explain itself.
         self._server_log: deque = deque(maxlen=200)
         self._last_connect_error: Optional[BaseException] = None
+        self._stalled = False
+        self._hwaccel = None
+        self._fallback_announced = False
+        self._fallback_stop = threading.Event()
+        # Watchdog state: the time of the last frame the guest presented.
+        self._last_frame_at = time.monotonic()
+        self._watchdog_stop = threading.Event()
 
         # Latest decoded frame: a single slot the UI pulls from (~30 Hz).  A new
         # frame overwrites whatever was not consumed yet (older frames drop).
@@ -244,7 +305,12 @@ class ScreenStream:
         self._stats_lock = threading.Lock()
         self._stats = {
             "received": 0, "decoded": 0, "painted": 0, "dropped": 0,
-            "decode_ms": 0.0, "convert_ms": 0.0, "paint_ms": 0.0,
+            # ``wait_ms`` is the time spent *waiting for bytes* on the
+            # socket; ``decode_ms`` is the real CPU decode time.  They used
+            # to be lumped together, which made a starved stream look like a
+            # slow decoder.
+            "decode_ms": 0.0, "wait_ms": 0.0, "convert_ms": 0.0,
+            "paint_ms": 0.0,
         }
         self._stats_stop = threading.Event()
         self._stats_thread: Optional[threading.Thread] = None
@@ -271,6 +337,13 @@ class ScreenStream:
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    def controller(self) -> Optional[ScrcpyController]:
+        """Return the low-latency input controller, or None in fallback mode."""
+        controller = self._controller
+        if controller is None or controller.is_closed:
+            return None
+        return controller
 
     # -- lifecycle --------------------------------------------------------
     def start(self, serial: Optional[str] = None, max_size: int = 960,
@@ -314,10 +387,15 @@ class ScreenStream:
             self._latest_image = None
             return image, seq
 
-    def _publish_frame(self, image: QImage):
+    def _publish_frame(self, image: QImage, from_fallback: bool = False):
         """Store the latest decoded frame, dropping any unread previous one."""
         if image is None:
             return
+        self._last_frame_at = time.monotonic()
+        if not from_fallback:
+            # The fast path is alive: the screencap fallback is no longer
+            # needed and must not keep stealing CPU/adb bandwidth.
+            self._fallback_stop.set()
         with self._frame_lock:
             if self._latest_image is not None:
                 with self._stats_lock:
@@ -361,7 +439,8 @@ class ScreenStream:
             "stats 5s: "
             f"received={snap['received']} decoded={snap['decoded']} "
             f"painted={snap['painted']} dropped={snap['dropped']} | "
-            f"avg decode={avg(snap['decode_ms'], snap['received']):.1f}ms "
+            f"avg wait={avg(snap['wait_ms'], snap['received']):.1f}ms "
+            f"decode={avg(snap['decode_ms'], snap['received']):.1f}ms "
             f"convert={avg(snap['convert_ms'], snap['decoded']):.1f}ms "
             f"paint={avg(snap['paint_ms'], snap['painted']):.1f}ms")
 
@@ -374,6 +453,19 @@ class ScreenStream:
             self._stop_stats()
 
     def _run_inner(self, serial: str, max_size: int, max_fps: int, bitrate: int):
+        """Run the video stream.
+
+        The scrcpy server (full rate) and the ``adb screencap`` fallback are
+        started *together*.  The fallback guarantees that the preview shows
+        something within a second; as soon as the scrcpy stream delivers its
+        first frame the fallback is stopped and the fast path takes over.
+        """
+        self._fallback_stop.clear()
+        fallback = threading.Thread(
+            target=self._run_screencap, args=(serial,),
+            name="ScreenFallback", daemon=True)
+        fallback.start()
+
         streamed = False
         try:
             streamed = self._run_scrcpy(serial, max_size, max_fps, bitrate)
@@ -385,16 +477,21 @@ class ScreenStream:
             self._teardown_scrcpy()
 
         if not streamed and not self._stop.is_set():
-            note = "scrcpy unavailable - using adb screencap fallback (~3 fps)"
             self._emit_state("fallback")
-            self._status(note)
-            self._emit_note(note)
-            try:
-                self._run_screencap(serial)
-            except Exception as exc:  # noqa: BLE001
-                if not self._stop.is_set():
-                    self._emit_error(
-                        f"screencap fallback error: {type(exc).__name__}: {exc}")
+            self._status("Using the adb screencap fallback (the emulator is "
+                         "not sending video frames)")
+            # The fast path may have stopped the fallback when its first
+            # frame arrived and then died: bring the fallback back so the
+            # preview keeps updating instead of freezing.
+            if self._fallback_stop.is_set():
+                self._fallback_stop.clear()
+                threading.Thread(
+                    target=self._run_screencap, args=(serial,),
+                    name="ScreenFallback", daemon=True).start()
+
+        # The fallback keeps running when scrcpy failed.
+        if streamed or self._stop.is_set():
+            self._fallback_stop.set()
 
         if not self._stop.is_set():
             self._status("Screen stream ended")
@@ -402,7 +499,7 @@ class ScreenStream:
 
     def _run_scrcpy(self, serial: str, max_size: int, max_fps: int,
                     bitrate: int) -> bool:
-        if av is None:
+        if _get_av() is None:
             self._emit_error("PyAV ('av') is not installed - cannot decode screen")
             return False
 
@@ -424,8 +521,11 @@ class ScreenStream:
         adb_bin = str(PlatformUtils.get_adb_path())
 
         # Stop any stale server so the abstract socket is free.
+        # This is pure housekeeping: it is logged only, never shown to the
+        # user, because a leftover server is normal (a previous run was killed
+        # before it could clean up its own socket).
         started = time.perf_counter()
-        self._status("Stopping old scrcpy-server...")
+        self._log_only("Stopping old scrcpy-server...")
         self._kill_old_server(adb_bin, serial)
         self._step_done("Stopping old scrcpy-server", started)
 
@@ -446,7 +546,7 @@ class ScreenStream:
             if not ok:
                 self._emit_error(
                     "scrcpy-server missing or size mismatch on device "
-                    f"(ApkPreview does not remove it): {_one_line(detail)}")
+                    f"(AppStation does not remove it): {_one_line(detail)}")
                 return False
         self._step_done("scrcpy-server ready", started)
 
@@ -475,32 +575,78 @@ class ScreenStream:
         t0 = time.perf_counter()
         self._status("Connecting to screen...")
         self._last_connect_error = None
-        sock = self._connect_with_retries(port, timeout=15.0)
-        if sock is None:
+        connected = self._connect_with_retries(port, timeout=15.0)
+        if connected is None:
             detail = self._last_connect_error
             detail = (f"{type(detail).__name__}: {detail}" if detail
                       else "no successful connection")
             self._emit_error(f"Could not connect to scrcpy-server ({detail})")
             self._log_server_output_on_failure()
             return False
+        sock, control_sock = connected
         self._step_done("connecting", t0)
 
         self._sock = sock
-        self._decode_loop(sock, max_fps)
+        self._control_sock = control_sock
+        self._controller = ScrcpyController(control_sock)
+        # Watchdog: when the guest stops presenting frames the decode blocks
+        # forever, so a background check aborts the stream and the caller
+        # falls back to the screencap path.  It is *not* a one-shot timer: a
+        # healthy stream can run for hours, so the deadline is measured from
+        # the most recent frame.
+        self._last_frame_at = time.monotonic()
+        self._watchdog_stop.clear()
+        watchdog = threading.Thread(target=self._watchdog_loop,
+                                    name="ScreenWatchdog", daemon=True)
+        watchdog.start()
+        try:
+            self._decode_loop(sock, max_fps)
+        finally:
+            self._watchdog_stop.set()
+            watchdog.join(timeout=1.0)
         return self._stop.is_set()
 
+    def _watchdog_loop(self):
+        """Abort the stream only when no frame has arrived for STALL_TIMEOUT."""
+        while not self._stop.is_set() and not self._watchdog_stop.is_set():
+            if self._watchdog_stop.wait(0.5):
+                break
+            if time.monotonic() - self._last_frame_at > STALL_TIMEOUT:
+                self._abort_stalled_stream()
+                break
+
+    def _abort_stalled_stream(self):
+        """Called by the watchdog when no frame arrived in time."""
+        if self._stop.is_set():
+            return
+        self._log_only(f"No frame for {STALL_TIMEOUT:.0f}s - aborting the "
+                       "scrcpy stream")
+        try:
+            self._close_socket()
+        except Exception:
+            pass
+        self._stalled = True
+
     def _step_done(self, name: str, t0: float):
-        """Log how long a start step took (elapsed ms) with the [screen] prefix."""
-        self._status(f"{name}: {int((time.perf_counter() - t0) * 1000)} ms")
+        """Log how long a start step took (elapsed ms) with the [screen] prefix.
+
+        Logged only: the step timings are diagnostics, not user-facing steps.
+        The user-facing progress is reported by the explicit ``_status`` calls.
+        """
+        self._log_only(f"{name}: {int((time.perf_counter() - t0) * 1000)} ms")
 
     # -- device preparation / server process ------------------------------
     def _kill_old_server(self, adb_bin: str, serial: str):
         """Kill any stale scrcpy app_process so its abstract socket is freed."""
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [adb_bin, "-s", serial, "shell",
                  "pkill -f com.genymobile.scrcpy.Server"],
                 capture_output=True, timeout=10)
+            # pkill exists: 0 = killed, 1 = nothing to kill.  Either way the
+            # device is ready, so skip the expensive `ps` scan.
+            if result.returncode in (0, 1):
+                return
         except Exception:
             pass
         # Fallback for devices whose toybox has no pkill: scan ps and kill.
@@ -524,7 +670,7 @@ class ScreenStream:
         """Return the size of the remote jar, or None when it is absent.
 
         Used to skip re-pushing a jar that is already up to date (the remote
-        jar is never deleted by ApkPreview).
+        jar is never deleted by AppStation).
         """
         try:
             result = subprocess.run(
@@ -644,7 +790,7 @@ class ScreenStream:
         # Option order mirrors the manually-verified command line:
         #   CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / \
         #     com.genymobile.scrcpy.Server 5.0.1 raw_stream=true \
-        #     tunnel_forward=true audio=false control=false \
+        #     tunnel_forward=true audio=false control=true \
         #     max_size=1280 max_fps=30 cleanup=false
         # ``raw_stream=true`` disables device/stream/frame meta and the dummy
         # byte, leaving a plain H.264 Annex-B stream on the video socket.
@@ -656,7 +802,7 @@ class ScreenStream:
             "raw_stream=true",
             "tunnel_forward=true",
             "audio=false",
-            "control=false",
+            "control=true",
             f"max_size={int(max_size)}",
             f"max_fps={int(max_fps)}",
             "log_level=info",
@@ -674,23 +820,38 @@ class ScreenStream:
         except Exception:
             return False
 
+    @staticmethod
+    def _close_socket_quietly(sock):
+        if sock is None:
+            return
+        try:
+            sock.close()
+        except Exception:
+            pass
+
     def _connect_with_retries(self, port: int, timeout: float = 15.0):
-        """Connect to the adb-forwarded scrcpy socket.
+        """Connect to the adb-forwarded scrcpy video + control sockets.
 
         Mirrors scrcpy's own client logic: a refused *or reset* connection only
-        means the server is not ready yet, so keep retrying.  Once a TCP
-        connection is accepted we wait (up to 5s) for the server's first byte.
-        ``raw_stream=true`` disables the dummy byte, so the first byte is real
-        H.264 data - it is checked with ``MSG_PEEK`` so it is not consumed.
+        means the server is not ready yet, so keep retrying.  The server
+        accepts the video socket first and then the control socket; without
+        the second connection it never starts encoding, so both are opened
+        before waiting for the first video byte.  ``raw_stream=true`` disables
+        the dummy byte, so that first byte is real H.264 data - it is checked
+        with ``MSG_PEEK`` so it is not consumed.
+
+        Returns ``(video_sock, control_sock)`` or ``None``.
         """
         import socket
         deadline = time.time() + timeout
         attempt = 0
         while time.time() < deadline and not self._stop.is_set():
             attempt += 1
+            video_sock = None
+            control_sock = None
             try:
-                sock = socket.create_connection(("127.0.0.1", port),
-                                                timeout=1.0)
+                video_sock = socket.create_connection(("127.0.0.1", port),
+                                                      timeout=1.0)
             except OSError as exc:
                 self._last_connect_error = exc
                 print(f"[screen] connect attempt {attempt}: not ready yet "
@@ -699,8 +860,22 @@ class ScreenStream:
                 continue
 
             try:
-                sock.settimeout(5.0)
-                probe = sock.recv(1, socket.MSG_PEEK)
+                # The control socket must be connected immediately after the
+                # video socket: the server blocks in accept() until it arrives.
+                control_sock = socket.create_connection(("127.0.0.1", port),
+                                                        timeout=1.0)
+            except OSError as exc:
+                self._last_connect_error = exc
+                print(f"[screen] connect attempt {attempt}: video connected "
+                      f"but control socket failed "
+                      f"({type(exc).__name__}: {exc})", flush=True)
+                self._close_socket_quietly(video_sock)
+                time.sleep(0.2)
+                continue
+
+            try:
+                video_sock.settimeout(5.0)
+                probe = video_sock.recv(1, socket.MSG_PEEK)
                 if not probe:
                     # Accepted, then immediately closed: the abstract socket
                     # does not exist yet, so the server is not listening.
@@ -708,35 +883,30 @@ class ScreenStream:
                         "connection accepted then closed by the server")
                     print(f"[screen] connect attempt {attempt}: accepted then "
                           "closed by server (not ready yet)", flush=True)
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
+                    self._close_socket_quietly(video_sock)
+                    self._close_socket_quietly(control_sock)
                     time.sleep(0.2)
                     continue
-                sock.settimeout(None)
+                video_sock.settimeout(None)
+                control_sock.settimeout(None)
                 print(f"[screen] connect attempt {attempt}: connected - first "
                       "byte received from scrcpy-server", flush=True)
-                return sock
+                return video_sock, control_sock
             except socket.timeout:
                 self._last_connect_error = TimeoutError(
                     "no data from scrcpy-server within 5s")
                 print(f"[screen] connect attempt {attempt}: connected but no "
                       "video data within 5s", flush=True)
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+                self._close_socket_quietly(video_sock)
+                self._close_socket_quietly(control_sock)
                 time.sleep(0.2)
                 continue
             except OSError as exc:
                 self._last_connect_error = exc
                 print(f"[screen] connect attempt {attempt}: reset by server "
                       f"({type(exc).__name__}: {exc})", flush=True)
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+                self._close_socket_quietly(video_sock)
+                self._close_socket_quietly(control_sock)
                 time.sleep(0.2)
                 continue
 
@@ -757,7 +927,12 @@ class ScreenStream:
         print("[screen] --- end scrcpy-server output ---", flush=True)
 
     def _configure_decoder(self, container):
-        """Low-latency PyAV decode: auto threading, no B-frame buffering."""
+        """Low-latency PyAV decode: auto threading, no B-frame buffering.
+
+        Hardware decoding is requested first (VideoToolbox on macOS, D3D11 /
+        DXVA on Windows); when it is unavailable the software decoder is used
+        and the reason is logged.
+        """
         try:
             stream = container.streams.video[0]
         except Exception:
@@ -769,68 +944,175 @@ class ScreenStream:
         try:
             context = stream.codec_context
             context.thread_type = "AUTO"
-            context.flags |= av.codec.context.Flags.low_delay
-            context.flags2 |= av.codec.context.Flags2.fast
+            av = _get_av()
+            if av is not None:
+                context.flags |= av.codec.context.Flags.low_delay
+                context.flags2 |= av.codec.context.Flags2.fast
         except Exception:
             pass
+        self._enable_hwaccel(stream)
+
+    def _enable_hwaccel(self, stream) -> bool:
+        """Try to enable hardware decoding for this stream."""
+        try:
+            candidates = []
+            if PlatformUtils.IS_MACOS:
+                candidates = ["videotoolbox", "videotoolbox-vld"]
+            elif PlatformUtils.IS_WINDOWS:
+                candidates = ["d3d11va", "dxva2-vld", "d3d11va-vld"]
+            else:
+                candidates = ["vaapi", "vdpau"]
+            for name in candidates:
+                try:
+                    stream.codec_context.options = {"hwaccel": name}
+                    stream.codec_context.thread_type = "AUTO"
+                    self._hwaccel = name
+                    self._log_only(f"Hardware decoding requested: {name}")
+                    return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        self._hwaccel = None
+        self._log_only("Hardware decoding unavailable - using software decode")
+        return False
 
     def _decode_loop(self, sock, max_fps: int):
+        """Decode the H.264 stream, always keeping only the newest frame.
+
+        The decoder runs on the stream thread, never on the GUI thread, and
+        the frame slot holds a single frame: a newer frame overwrites an
+        unread one, so the pipeline can never build a backlog.
+        """
         source = _SocketFile(sock)
-        container = av.open(source, format="h264")
+        av = _get_av()
+        if av is None:
+            return
+        # A raw H.264 stream from scrcpy has no container metadata, so PyAV
+        # would otherwise keep *probing* until it has enough bytes.  On a
+        # static screen scrcpy sends one small IDR and then nothing, which
+        # made av.open() block for up to ~90 s - the preview stayed on the
+        # slow screencap fallback the whole time.  The stream is known to be
+        # H.264, so probe only the first packet.
+        try:
+            container = av.open(
+                source, format="h264",
+                options={"probesize": "1024", "analyzeduration": "0"})
+        except Exception:
+            container = av.open(source, format="h264")
         self._configure_decoder(container)
         got_first_frame = False
+        started = time.perf_counter()
         try:
-            iterator = container.decode(video=0)
-            while not self._stop.is_set():
-                t0 = time.perf_counter()
-                try:
-                    frame = next(iterator)
-                except StopIteration:
+            try:
+                stream = container.streams.video[0]
+                codec = stream.codec_context
+            except Exception:
+                stream = None
+                codec = None
+
+            # Demux packets so the time spent *waiting for data* can be
+            # measured separately from the real decode cost.  The wait is
+            # the gap between finishing one packet and the next one
+            # arriving; the decode is the CPU work on the packet itself.
+            last_end = time.perf_counter()
+            for packet in container.demux(video=0):
+                if self._stop.is_set():
                     break
+                if packet.size == 0:
+                    continue
+                t0 = time.perf_counter()
+                wait_ms = (t0 - last_end) * 1000.0
+
+                try:
+                    frames = codec.decode(packet) if codec is not None \
+                        else [packet.decode()]
+                except Exception:
+                    frames = []
                 t1 = time.perf_counter()
+                decode_ms = (t1 - t0) * 1000.0
+                last_end = t1
+
                 with self._stats_lock:
                     self._stats["received"] += 1
-                    self._stats["decode_ms"] += (t1 - t0) * 1000.0
+                    self._stats["wait_ms"] += wait_ms
+                    self._stats["decode_ms"] += decode_ms
 
-                t2 = time.perf_counter()
-                image = self._frame_to_qimage(frame)
-                t3 = time.perf_counter()
-                if image is None:
-                    continue
-                with self._stats_lock:
-                    self._stats["decoded"] += 1
-                    self._stats["convert_ms"] += (t3 - t2) * 1000.0
+                for frame in frames:
+                    if frame is None:
+                        continue
+                    t3 = time.perf_counter()
+                    image = self._frame_to_qimage(frame)
+                    t4 = time.perf_counter()
+                    if image is None:
+                        continue
+                    # Touch events must be tagged with the encoder's video
+                    # size, which is smaller than the device screen whenever
+                    # max_size kicks in.  Keep the controller in sync.
+                    controller = self._controller
+                    if controller is not None:
+                        controller.set_video_size(image.width(),
+                                                  image.height())
+                    with self._stats_lock:
+                        self._stats["decoded"] += 1
+                        self._stats["convert_ms"] += (t4 - t3) * 1000.0
 
-                if not got_first_frame:
-                    got_first_frame = True
-                    self._status("Screen streaming")
-                    self._emit_state("streaming")
-                self._publish_frame(image)
+                    if not got_first_frame:
+                        got_first_frame = True
+                        self._status("Screen streaming")
+                        self._emit_state("streaming")
+                    self._publish_frame(image)
         finally:
             try:
                 container.close()
             except Exception:
                 pass
+            if not got_first_frame and not self._stop.is_set():
+                # The server accepted the connection but the guest never
+                # produced a frame.  This happens when the emulator has no
+                # usable GPU: the software renderer never presents a buffer.
+                waited = time.perf_counter() - started
+                self._emit_error(
+                    f"No video frame from the guest after {waited:.0f}s "
+                    f"(the emulator is not presenting frames)")
+                self._emit_state("stalled")
 
     @staticmethod
     def _frame_to_qimage(frame) -> Optional[QImage]:
         return _video_frame_to_qimage(frame)
 
     def _run_screencap(self, serial: str):
+        """Capture the guest screen with ``adb exec-out screencap``.
+
+        The raw format (no PNG encoding on the guest) is used because it is
+        noticeably faster: the guest does not have to compress the frame.
+        Only the newest frame is kept, so the pipeline never queues.
+        """
         adb_bin = str(PlatformUtils.get_adb_path())
-        cmd = [adb_bin, "-s", serial, "exec-out", "screencap", "-p"]
-        while not self._stop.is_set():
+        cmd = [adb_bin, "-s", serial, "exec-out", "screencap"]
+        # Give scrcpy a head start: a screencap during server startup competes
+        # with the encoder for emulator CPU and delays the fast path.  If
+        # scrcpy fails, the fallback still appears ~2s later.
+        if self._stop.wait(2.0):
+            return
+        while not self._stop.is_set() and not self._fallback_stop.is_set():
             started = time.time()
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=15)
+                result = subprocess.run(cmd, capture_output=True, timeout=20)
                 data = result.stdout
                 if data and not self._stop.is_set():
-                    image = QImage()
-                    if image.loadFromData(data):
+                    image = _raw_screencap_to_qimage(data)
+                    if image is None:
+                        image = QImage()
+                        image.loadFromData(data)
+                    if not image.isNull():
                         with self._stats_lock:
                             self._stats["received"] += 1
                             self._stats["decoded"] += 1
-                        self._publish_frame(image)
+                        self._publish_frame(image, from_fallback=True)
+                        if not self._fallback_announced:
+                            self._fallback_announced = True
+                            self._log_only("screencap fallback is live")
             except Exception:
                 pass
             remaining = FALLBACK_INTERVAL - (time.time() - started)
@@ -840,18 +1122,18 @@ class ScreenStream:
     # -- teardown ---------------------------------------------------------
     def _close_socket(self):
         sock = self._sock
-        if sock is None:
-            return
-        try:
-            import socket as _socket
-            sock.shutdown(_socket.SHUT_RDWR)
-        except Exception:
-            pass
-        try:
-            sock.close()
-        except Exception:
-            pass
+        control_sock = self._control_sock
         self._sock = None
+        self._control_sock = None
+        self._controller = None
+        if sock is not None:
+            try:
+                import socket as _socket
+                sock.shutdown(_socket.SHUT_RDWR)
+            except Exception:
+                pass
+        self._close_socket_quietly(sock)
+        self._close_socket_quietly(control_sock)
 
     def _teardown_scrcpy(self):
         self._close_socket()
@@ -869,8 +1151,13 @@ class ScreenStream:
                 except Exception:
                     pass
             self._server_proc = None
+        # The local `adb shell` going away does not always stop the on-device
+        # app_process, so the device side is cleaned up explicitly.  This is
+        # what stops a server from surviving a preview close or an emulator
+        # stop and having to be killed at the next start.
+        self.kill_remote_server()
         # NOTE: the pushed remote jar is intentionally left in place.  Nothing
-        # in ApkPreview ever deletes /data/local/tmp/scrcpy-server.jar (scrcpy
+        # in AppStation ever deletes /data/local/tmp/scrcpy-server.jar (scrcpy
         # itself is started with cleanup=false).
         if self._forward_port is not None:
             try:
@@ -886,6 +1173,37 @@ class ScreenStream:
     def _on_download_progress(self, percent: int):
         self._status(f"Downloading scrcpy-server... {percent}%")
         self._emit_note(f"Downloading scrcpy-server... {percent}%")
+
+    def _log_only(self, message: str):
+        """Log a housekeeping message to stdout only (never shown in the UI).
+
+        Used for internal cleanup steps such as killing a leftover
+        scrcpy-server, which are normal background work and should not be
+        reported as user-facing progress.
+        """
+        try:
+            print(f"[screen] {message}", flush=True)
+        except Exception:
+            pass
+
+    def kill_remote_server(self):
+        """Kill the scrcpy-server running on the device.
+
+        Called when the emulator stops and when the preview is closed so a
+        leftover server never lingers on the device.  The local ``adb shell``
+        process is not enough: terminating it does not always stop the
+        on-device ``app_process``, which is why the device side is killed
+        explicitly.
+        """
+        try:
+            adb_bin = str(PlatformUtils.get_adb_path())
+        except Exception:
+            return
+        try:
+            self._kill_old_server(adb_bin, self._serial)
+            self._log_only("Remote scrcpy-server stopped")
+        except Exception:
+            pass
 
     def _status(self, message: str):
         """Print a stage message to stdout and forward it to the UI."""

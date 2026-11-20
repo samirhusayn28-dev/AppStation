@@ -1,4 +1,4 @@
-"""Settings management for ApkPreview - JSON-based persistence."""
+"""Settings management for AppStation - JSON-based persistence."""
 
 import json
 from pathlib import Path
@@ -18,13 +18,17 @@ class Settings:
         "performance_mode": "auto",  # auto, low_spec, normal, high
         "low_power_mode": False,
         "quickboot": True,
-        "device_preset": "default",
         # native = real emulator window (default), embedded = in-app scrcpy view
-        "display_mode": "native",
+        "display_mode": "embedded",
+        # Keep the frameless preview window above all other windows.
+        "always_on_top": True,
         "idle_timeout_minutes": 10,
         "auto_reinstall": False,
-        "scrcpy_bitrate": "8M",
-        "scrcpy_max_size": 960,
+        # Balanced defaults: 720p / 4 Mbps is plenty for the ~250 px preview
+        # and keeps the emulator encoder and host decoder cheap on low-end
+        # machines (and future, heavier Android versions).
+        "scrcpy_bitrate": "4M",
+        "scrcpy_max_size": 720,
         "scrcpy_max_fps": 30,
         "show_resource_meter": True,
         "logcat_auto_filter": True,
@@ -145,13 +149,14 @@ class Settings:
         self.set("quickboot", bool(value))
     
     @property
-    def device_preset(self) -> str:
-        return self._data.get("device_preset", "default")
-    
-    @device_preset.setter
-    def device_preset(self, value: str):
-        self.set("device_preset", value)
-    
+    def always_on_top(self) -> bool:
+        """Keep the detached preview window above every other window."""
+        return bool(self._data.get("always_on_top", True))
+
+    @always_on_top.setter
+    def always_on_top(self, value: bool):
+        self.set("always_on_top", bool(value))
+
     @property
     def display_mode(self) -> str:
         """Where the device screen is shown.

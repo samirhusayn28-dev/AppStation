@@ -1,1 +1,1 @@
-"""Tests package for ApkPreview."""
+"""Tests package for AppStation."""

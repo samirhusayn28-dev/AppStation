@@ -1,4 +1,4 @@
-"""Cross-platform utilities for ApkPreview - all OS differences live here."""
+"""Cross-platform utilities for AppStation - all OS differences live here."""
 
 import os
 import sys
@@ -403,8 +403,15 @@ class PlatformUtils:
     
     @classmethod
     def start_detached_process(cls, cmd: List[str], cwd: Optional[Path] = None,
-                               env: Optional[dict] = None) -> subprocess.Popen:
-        """Start a detached process (for emulator, scrcpy)."""
+                               env: Optional[dict] = None,
+                               log_file: Optional[Path] = None
+                               ) -> subprocess.Popen:
+        """Start a detached process (for emulator, scrcpy).
+
+        When ``log_file`` is given the process output is written there, which
+        is how the emulator's own log is captured so the acceleration and GPU
+        mode can be verified afterwards.
+        """
         if cls.IS_WINDOWS and cmd[0].endswith(".bat"):
             full_cmd = ["cmd", "/c"] + cmd
         else:
@@ -418,24 +425,44 @@ class PlatformUtils:
         if sdk_platform_tools not in merged_env.get("PATH", ""):
             merged_env["PATH"] = sdk_platform_tools + os.pathsep + merged_env.get("PATH", "")
         
-        if cls.IS_WINDOWS:
-            return subprocess.Popen(
-                full_cmd,
-                cwd=str(cwd) if cwd else None,
-                env=merged_env,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
+        stdout = subprocess.DEVNULL
+        stderr = subprocess.DEVNULL
+        handle = None
+        if log_file is not None:
+            try:
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+                handle = open(log_file, "wb")
+                stdout = handle
+                stderr = subprocess.STDOUT
+            except OSError:
+                handle = None
+
+        try:
+            if cls.IS_WINDOWS:
+                return subprocess.Popen(
+                    full_cmd,
+                    cwd=str(cwd) if cwd else None,
+                    env=merged_env,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                    | subprocess.DETACHED_PROCESS,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
             return subprocess.Popen(
                 full_cmd,
                 cwd=str(cwd) if cwd else None,
                 env=merged_env,
                 start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
             )
+        finally:
+            # The child keeps its own descriptor; the parent's copy can go.
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
     
     @classmethod
     def kill_process_tree(cls, pid: int):

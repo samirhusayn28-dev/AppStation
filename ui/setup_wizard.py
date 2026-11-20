@@ -30,13 +30,11 @@ from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
 from core.bootstrap import (BASE_COMPONENTS, COMPONENT_LABELS,
                             COMPONENT_SIZES_MB, BootstrapManager,
                             SetupState, format_mb, needs_setup)
-from core.device_presets import CATEGORY_PHONE, preset_manager
 from core.hardware_profile import (EmulatorConfig, PerformanceMode,
                                    get_default_config_for_mode)
 from core.platform_utils import PlatformUtils
 from core.sdk_manager import ANDROID_VERSION_NAMES, AndroidVersion, SDKManager
 from core.settings import settings
-from .device_picker import DevicePickerDialog
 
 
 # API levels offered when sdkmanager is not installed yet.  The version page
@@ -131,7 +129,7 @@ class AvdWorker(QThread):
 class WelcomePage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Welcome to ApkPreview")
+        self.setTitle("Welcome to AppStation")
         self.setSubTitle("Set up a local Android emulator. No Android Studio, "
                          "no phone, no account.")
         layout = QVBoxLayout(self)
@@ -139,7 +137,7 @@ class WelcomePage(QWizardPage):
 
         intro = QLabel(
             "This wizard checks your computer, installs the Android tools "
-            "ApkPreview needs, and creates one emulator device.")
+            "AppStation needs, and creates one emulator device.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -147,7 +145,6 @@ class WelcomePage(QWizardPage):
             "• Java 17, Android command-line tools, platform-tools and the "
             "emulator\n"
             "• The Android SDK licenses\n"
-            "• One device from the bundled Apple / Samsung / Google list\n"
             "• One Android system image and its AVD")
         bullets.setWordWrap(True)
         layout.addWidget(bullets)
@@ -244,7 +241,7 @@ class SdkPage(QWizardPage):
     def __init__(self):
         super().__init__()
         self.setTitle("SDK location and Java 17")
-        self.setSubTitle("ApkPreview keeps its own SDK by default. You can "
+        self.setSubTitle("AppStation keeps its own SDK by default. You can "
                          "point it at an existing Android SDK instead.")
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -269,7 +266,7 @@ class SdkPage(QWizardPage):
 
         note = QLabel(
             "Java 17 is required by sdkmanager. If it is missing, step 6 "
-            "downloads a private copy into ApkPreview's data folder; your "
+            "downloads a private copy into AppStation's data folder; your "
             "system Java is not modified.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
@@ -319,7 +316,7 @@ class SystemCheckPage(QWizardPage):
     def __init__(self):
         super().__init__()
         self.setTitle("System check")
-        self.setSubTitle("ApkPreview works best with 8 GB RAM, 4 CPU threads, "
+        self.setSubTitle("AppStation works best with 8 GB RAM, 4 CPU threads, "
                          "10 GB free disk and hardware virtualization.")
         layout = QVBoxLayout(self)
         self.details = QTextEdit()
@@ -527,84 +524,6 @@ class DownloadPage(QWizardPage):
             self._worker = None
 
 
-class DevicePage(QWizardPage):
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Choose a device")
-        self.setSubTitle("Bundled Apple, Samsung and Google devices, grouped "
-                         "Brand > Category. Apple entries are viewport-only "
-                         "previews.")
-        layout = QVBoxLayout(self)
-        self.label = QLabel("")
-        self.label.setWordWrap(True)
-        self.label.setFont(QFont("", 11))
-        layout.addWidget(self.label)
-        self.btn_choose = QPushButton("Choose device...")
-        self.btn_choose.clicked.connect(self._choose)
-        layout.addWidget(self.btn_choose)
-        self.note = QLabel(
-            "The emulator always runs Android. Apple presets only match the "
-            "iPhone/iPad viewport and frame; they cannot run iOS apps.")
-        self.note.setWordWrap(True)
-        self.note.setStyleSheet("color: #888;")
-        layout.addWidget(self.note)
-        layout.addStretch(1)
-
-    def initializePage(self):
-        state = self.wizard().state
-        if not state.device_key or preset_manager.get_preset(
-                state.device_key) is None:
-            # Sensible default: a current Pixel phone.
-            default = preset_manager.get_preset("google_pixel_8")
-            if default is None:
-                phones = [p for p in preset_manager.get_all_presets().values()
-                          if p.category == CATEGORY_PHONE]
-                default = phones[0] if phones else None
-            if default is not None:
-                state.device_key = default.key
-                state.save()
-        self._refresh()
-
-    def _refresh(self):
-        preset = preset_manager.get_preset(self.wizard().state.device_key)
-        if preset is None:
-            self.label.setText("No device selected")
-            self.completeChanged.emit()
-            return
-        text = (f"{preset.brand} {preset.name}\n"
-                f"{preset.category} · {preset.size_str} @ {preset.density} dpi "
-                f"· {preset.cutout_label}")
-        if preset.is_foldable and preset.inner and preset.outer:
-            text += (f"\nInner {preset.inner.size_str}, cover "
-                     f"{preset.outer.size_str} (switch in Controls)")
-        if preset.preview_only:
-            text += "\nApple viewport/frame preview only — no iOS apps."
-        if preset.rumored:
-            text += "\nRumored/unconfirmed device."
-        self.label.setText(text)
-        self.completeChanged.emit()
-
-    def _choose(self):
-        dialog = DevicePickerDialog(self, self.wizard().state.device_key)
-        if dialog.exec():
-            key = dialog.selected_key()
-            if key:
-                self.wizard().state.device_key = key
-                self.wizard().state.save()
-                self._refresh()
-
-    def isComplete(self):
-        return preset_manager.get_preset(
-            self.wizard().state.device_key) is not None
-
-    def validatePage(self):
-        if not self.isComplete():
-            QMessageBox.warning(self, "Choose a device",
-                                "Choose a device before continuing.")
-            return False
-        return True
-
-
 class VersionPage(QWizardPage):
     def __init__(self):
         super().__init__()
@@ -747,7 +666,7 @@ class FinishPage(QWizardPage):
     def __init__(self):
         super().__init__()
         self.setTitle("Create the emulator")
-        self.setSubTitle("ApkPreview downloads the selected image if needed, "
+        self.setSubTitle("AppStation downloads the selected image if needed, "
                          "creates its AVD, then finishes. The emulator is not "
                          "started.")
         self._worker = None
@@ -769,12 +688,10 @@ class FinishPage(QWizardPage):
 
     def initializePage(self):
         state = self.wizard().state
-        preset = preset_manager.get_preset(state.device_key)
         name = ANDROID_VERSION_NAMES.get(state.api_level,
                                          f"Android {state.api_level}")
         lines = [
             f"SDK folder: {self.wizard().bootstrap.sdk_dir}",
-            f"Device: {preset.brand + ' ' + preset.name if preset else 'not chosen'}",
             f"Android: {name} (API {state.api_level}, "
             f"{state.variant or 'default'})",
             f"Components: {', '.join(self.wizard().components)}",
@@ -851,7 +768,7 @@ class SetupWizard(QWizard):
 
     def __init__(self, parent=None, force: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("ApkPreview Setup")
+        self.setWindowTitle("AppStation Setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.resize(780, 640)
         self.components = list(BASE_COMPONENTS)
@@ -868,11 +785,10 @@ class SetupWizard(QWizard):
         self.addPage(SystemCheckPage())
         self.addPage(LicensePage())
         self.addPage(DownloadPage())
-        self.addPage(DevicePage())
         self.addPage(VersionPage())
         self.addPage(FinishPage())
 
-        self.setStartId(min(max(int(self.state.step or 0), 0), 8))
+        self.setStartId(min(max(int(self.state.step or 0), 0), 7))
         self.currentIdChanged.connect(self._save_step)
         self.finished.connect(self._on_finished)
 

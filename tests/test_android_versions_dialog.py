@@ -43,6 +43,29 @@ class TestVersionDialogGuards(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
 
+    def setUp(self):
+        # These guards compare the running AVD with the *selected* version in
+        # settings.  Pin the selection so the tests do not depend on the
+        # developer's persisted settings.json.
+        from core.settings import settings
+        # Mutate the in-memory data only: no disk write, no persisted state.
+        self._saved_selection = (settings._data.get("selected_api_level"),
+                                 settings._data.get("selected_variant"))
+        settings._data["selected_api_level"] = 99
+        settings._data["selected_variant"] = "test"
+
+    def tearDown(self):
+        from core.settings import settings
+        level, variant = self._saved_selection
+        if level is None:
+            settings._data.pop("selected_api_level", None)
+        else:
+            settings._data["selected_api_level"] = level
+        if variant is None:
+            settings._data.pop("selected_variant", None)
+        else:
+            settings._data["selected_variant"] = variant
+
     def _dialog(self, running=False):
         from ui.android_versions_dialog import AndroidVersionsDialog
         with mock.patch.object(AndroidVersionsDialog, "refresh",
@@ -108,6 +131,7 @@ class TestVersionDialogGuards(unittest.TestCase):
         dialog.table.selectRow(1)
         with mock.patch.object(dialog, "_confirm_replace",
                                return_value=(True, False)), \
+                mock.patch.object(dialog, "_free_gb", return_value=100.0), \
                 mock.patch.object(dialog, "_refuse_running") as refuse, \
                 mock.patch.object(dialog, "_start_task") as start:
             dialog._on_download()

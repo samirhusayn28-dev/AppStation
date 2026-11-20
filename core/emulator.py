@@ -1,6 +1,7 @@
-"""Emulator management for ApkPreview - start, stop, monitor, snapshot."""
+"""Emulator management for AppStation - start, stop, monitor, snapshot."""
 
 import os
+import re
 import subprocess
 import time
 import threading
@@ -208,16 +209,103 @@ class EmulatorManager:
 
     # -- lifecycle -------------------------------------------------------
 
+    def _emulator_log_path(self) -> Path:
+        """Where the emulator's own stdout/stderr is captured."""
+        try:
+            return PlatformUtils.get_app_data_dir() / "emulator.log"
+        except Exception:
+            return Path.home() / ".apkpreview" / "emulator.log"
+
     def _start_once(self, cmd: List[str], wait_for_boot: bool,
                     timeout: int) -> Tuple[bool, str]:
         try:
-            self._process = PlatformUtils.start_detached_process(cmd)
+            log_path = self._emulator_log_path()
+            self._process = PlatformUtils.start_detached_process(
+                cmd, log_file=log_path)
             self._serial = None
             if wait_for_boot:
-                return self._wait_for_boot(timeout)
+                result = self._wait_for_boot(timeout)
+                self._verify_acceleration_and_gpu(log_path)
+                return result
             return True, "Emulator started"
         except Exception as e:
             return False, f"Failed to start emulator: {e}"
+
+    def _read_emulator_log(self) -> str:
+        """Read the captured emulator log (best effort)."""
+        try:
+            path = self._emulator_log_path()
+            if path.exists():
+                return path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+        return ""
+
+    def _verify_acceleration_and_gpu(self,
+                                     log_path: Optional[Path] = None):
+        """Check that CPU acceleration and the GPU mode are as expected.
+
+        The emulator prints the chosen accelerator and graphics adapter to
+        its log.  When the host has no usable GPU the emulator silently falls
+        back to ANGLE-on-SwiftShader (pure software rendering), which is very
+        slow, so the user is warned about it.
+        """
+        text = self._read_emulator_log()
+        if not text:
+            return
+        lowered = text.lower()
+
+        accel = ""
+        for marker, name in (
+                ("Hypervisor.Framework", "Hypervisor Framework (hvf)"),
+                ("Windows Hypervisor Platform", "WHPX"),
+                ("Android Emulator Hypervisor Driver", "AEHD"),
+                ("hax", "HAX")):
+            if marker.lower() in lowered:
+                accel = name
+                break
+        if not accel:
+            # Newer emulator builds do not always print the accelerator to
+            # stdout, so fall back to the host probe (which is authoritative).
+            info = PlatformUtils.get_acceleration_info()
+            if info.get("supported"):
+                backend = str(info.get("backend") or "").lower()
+                accel = {"hvf": "Hypervisor Framework (hvf)",
+                         "whpx": "WHPX",
+                         "aehd": "AEHD",
+                         "kvm": "KVM"}.get(backend, backend.upper() or "hardware")
+        if accel:
+            self._log(f"CPU acceleration active: {accel}")
+        else:
+            self._log("WARNING: no hardware CPU acceleration found in the "
+                      "emulator log")
+
+        # The GLES mode decides how the *guest UI* is rendered.  A Vulkan
+        # SwiftShader line is harmless (Vulkan is only used for some apps);
+        # what matters is ``gles_mode_selected``.  Older builds print
+        # ``swangle`` instead, which is the software fallback.
+        match = re.search(r"gles_mode_selected:(\w+)", lowered)
+        gles = match.group(1) if match else ""
+        adapter = ""
+        adapters = re.findall(r"graphics adapter ([^\r\n]+)", text, re.I)
+        for line in adapters:
+            if "translator" in line.lower() or "opengl es" in line.lower():
+                adapter = line.strip()
+                break
+        if not adapter and adapters:
+            adapter = adapters[-1].strip()
+        software = (gles in ("swiftshader", "swangle")
+                    or (not gles and "swangle" in lowered))
+        self._software_gpu = software
+        if software:
+            self._last_gpu_mode = "software (ANGLE/SwiftShader)"
+            self._log("WARNING: the emulator is using software rendering "
+                      "(ANGLE/SwiftShader) - no usable host GPU.  Expect a "
+                      "slow screen.")
+        else:
+            self._last_gpu_mode = (f"host GPU ({adapter})" if adapter
+                                   else "host GPU")
+            self._log(f"GPU mode: {self._last_gpu_mode}")
 
     def _stop_process(self) -> None:
         if self._process is not None:
@@ -229,7 +317,7 @@ class EmulatorManager:
         self._serial = None
 
     def start(self, mode: PerformanceMode, wait_for_boot: bool = True,
-              timeout: int = 180, scrcpy_available: bool = True,
+              timeout: int = 120, scrcpy_available: bool = True,
               no_window: bool = False, open_window: bool = False) -> Tuple[bool, str]:
         """Start the emulator, preferring a quickboot snapshot when present.
 
@@ -250,11 +338,16 @@ class EmulatorManager:
         force_window = (not scrcpy_available) or open_window
 
         use_snapshot = bool(settings.quickboot and self.has_snapshot())
+        if use_snapshot:
+            self._log("Quickboot snapshot found - warm boot "
+                      f"(only the first boot is cold)")
+        else:
+            self._log("No quickboot snapshot - cold boot")
         cmd = self.build_start_command(
             mode, force_window=force_window, no_window=no_window,
             use_snapshot=use_snapshot)
         self._log(f"Starting emulator: {' '.join(cmd)}")
-        self._progress(0, "Starting emulator process")
+        self._progress(0, "Starting emulator...")
         ok, message = self._start_once(cmd, wait_for_boot, timeout)
 
         if not ok and use_snapshot:
@@ -269,7 +362,7 @@ class EmulatorManager:
             self._log(f"Retrying cold: {' '.join(cmd)}")
             ok, message = self._start_once(cmd, wait_for_boot, timeout)
 
-        if not ok and self._gpu_override_needed(mode, force_window=no_window):
+        if not ok and self._gpu_override_needed(mode, no_window=no_window):
             # The default profile asked for host GPU but the emulator could
             # not boot.  Retry with software rendering before giving up.
             self._log("GPU 'host' failed; retrying with swiftshader_indirect")
@@ -289,6 +382,8 @@ class EmulatorManager:
             self._log(f"Quickboot snapshot: {save_message}")
             if saved:
                 self._progress(100, "Emulator ready")
+        elif ok and wait_for_boot and settings.quickboot:
+            self._log("Quickboot snapshot already present - not rewritten")
 
         return ok, message
 
@@ -345,6 +440,24 @@ class EmulatorManager:
                           timeout=10)
         self._log("Guest animations disabled")
 
+    def _reset_guest_overrides(self) -> None:
+        """Clear any leftover ``wm size`` / ``wm density`` override.
+
+        A ``wm size`` override survives inside the AVD and makes the guest
+        render at a *much* larger resolution than the emulator was started
+        with.  With software rendering that is enough to starve the guest
+        completely (no frames at all, SystemUI ANRs).  The overrides came
+        from the removed per-device feature, so they are cleared on every
+        boot.
+        """
+        for args in (["shell", "wm", "size", "reset"],
+                     ["shell", "wm", "density", "reset"]):
+            try:
+                self._run_adb(args, timeout=10)
+            except Exception:
+                pass
+        self._log("Guest wm size/density overrides reset")
+
     def _wait_for_boot(self, timeout: int) -> Tuple[bool, str]:
         """Wait for emulator boot, reporting real stage progress."""
         start_time = time.time()
@@ -369,6 +482,7 @@ class EmulatorManager:
             if (result is not None and result.returncode == 0
                     and (result.stdout or "").strip() == "1"):
                 self._progress(100, "Emulator ready")
+                self._reset_guest_overrides()
                 self._disable_guest_animations()
                 self._log("Emulator booted successfully")
                 if self._boot_callback:
@@ -379,11 +493,11 @@ class EmulatorManager:
                 ["shell", "getprop", "init.svc.bootanim"], timeout=10)
             anim_state = (anim.stdout or "").strip() if anim is not None else ""
             if anim_state == "stopped":
-                percent, stage = 85, "Android system starting"
+                percent, stage = 85, "Starting Android system"
             elif anim_state == "running":
-                percent, stage = 55, "Android boot animation"
+                percent, stage = 55, "Booting Android"
             else:
-                percent, stage = 25, "Waiting for Android"
+                percent, stage = 25, "Booting Android"
             if percent != last_stage:
                 self._progress(percent, stage)
                 last_stage = percent

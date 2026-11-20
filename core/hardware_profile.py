@@ -1,4 +1,4 @@
-"""Hardware profiling and performance mode selection for ApkPreview."""
+"""Hardware profiling and performance mode selection for AppStation."""
 
 import psutil
 import platform
@@ -336,12 +336,12 @@ class HardwareProfiler:
         if low_power:
             return EmulatorConfig(
                 api_level=30,
-                memory_mb=1024,
-                cores=1,
-                gpu_mode="swiftshader_indirect",
-                screen_width=720,
-                screen_height=1280,
-                density=280,
+                memory_mb=1536,
+                cores=2,
+                gpu_mode="host",
+                screen_width=480,
+                screen_height=800,
+                density=240,
                 no_audio=True,
                 no_boot_anim=True,
                 no_snapshot_save=True,
@@ -353,28 +353,32 @@ class HardwareProfiler:
             api_level = 30  # Android 11
             config = EmulatorConfig(
                 api_level=api_level,
-                memory_mb=1024,
-                cores=1,
-                gpu_mode="swiftshader_indirect",
-                screen_width=720,
-                screen_height=1280,
-                density=280,
+                memory_mb=1536,
+                cores=2,
+                gpu_mode="host",
+                screen_width=480,
+                screen_height=800,
+                density=240,
                 no_audio=True,
                 no_boot_anim=True,
                 no_snapshot_save=True,
                 no_window=True,  # Run headless, show via scrcpy
             )
         elif mode == PerformanceMode.NORMAL:
-            # Android 14 (API 34)
+            # Android 14 (API 34).
+            #
+            # Default guest display: 720x1600 @ 320 dpi.  Small enough to
+            # keep frame decode and boot fast, large enough to look like a
+            # modern phone.
             api_level = 34
             config = EmulatorConfig(
                 api_level=api_level,
                 memory_mb=2048,
                 cores=2,
                 gpu_mode="host",
-                screen_width=1080,
-                screen_height=1920,
-                density=420,
+                screen_width=720,
+                screen_height=1600,
+                density=320,
                 no_audio=True,
                 no_boot_anim=True,
                 no_snapshot_save=True,

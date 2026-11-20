@@ -15,7 +15,6 @@ except Exception:  # pragma: no cover - system python may not have PyQt6
     HAS_QT = False
 
 from core.bootstrap import BootstrapManager, SetupState
-from core.device_presets import preset_manager
 from core.settings import settings
 
 
@@ -37,19 +36,21 @@ class TestSetupWizard(unittest.TestCase):
         wizard.bootstrap.state = wizard.state
         return wizard
 
-    def test_nine_pages_and_titles(self):
+    def test_eight_pages_and_titles(self):
+        """The wizard asks for the Android version only - no device page."""
         wizard = self._wizard()
-        self.assertEqual(len(wizard.pageIds()), 9)
+        self.assertEqual(len(wizard.pageIds()), 8)
         titles = [wizard.page(page_id).title() for page_id in wizard.pageIds()]
-        self.assertIn("Welcome to ApkPreview", titles[0])
+        self.assertIn("Welcome to AppStation", titles[0])
         self.assertIn("Standard or Custom", titles[1])
         self.assertIn("SDK location", titles[2])
         self.assertIn("System check", titles[3])
         self.assertIn("licenses", titles[4].lower())
         self.assertIn("Download", titles[5])
-        self.assertIn("Choose a device", titles[6])
-        self.assertIn("Android version", titles[7])
-        self.assertIn("Create", titles[8])
+        self.assertIn("Android version", titles[6])
+        self.assertIn("Create", titles[7])
+        # No device page any more.
+        self.assertFalse(any("device" in t.lower() for t in titles))
         wizard.close()
 
     def test_install_type_components(self):
@@ -102,18 +103,9 @@ class TestSetupWizard(unittest.TestCase):
         self.assertEqual(page.progress.value(), 100)
         wizard.close()
 
-    def test_device_page_defaults_to_pixel_and_persists(self):
-        wizard = self._wizard()
-        page = wizard.page(6)
-        page.initializePage()
-        self.assertEqual(wizard.state.device_key, "google_pixel_8")
-        self.assertTrue(page.isComplete())
-        self.assertIn("Pixel 8", page.label.text())
-        wizard.close()
-
     def test_version_page_fallback_has_sizes(self):
         wizard = self._wizard()
-        page = wizard.page(7)
+        page = wizard.page(6)
         with mock.patch("core.sdk_manager.SDKManager.is_sdk_installed",
                         return_value=False):
             page.initializePage()
@@ -128,14 +120,13 @@ class TestSetupWizard(unittest.TestCase):
 
     def test_finish_page_summary(self):
         wizard = self._wizard()
-        wizard.state.device_key = "google_pixel_8"
         wizard.state.api_level = 34
         wizard.state.variant = "default"
-        page = wizard.page(8)
+        page = wizard.page(7)
         page.initializePage()
         text = page.summary.toPlainText()
-        self.assertIn("Pixel 8", text)
         self.assertIn("API 34", text)
+        self.assertFalse("Device:" in text)
         self.assertFalse(page.isComplete())
         wizard.close()
 

@@ -1,4 +1,4 @@
-"""APK parsing utilities for ApkPreview."""
+"""APK parsing utilities for AppStation."""
 
 import re
 import zipfile
