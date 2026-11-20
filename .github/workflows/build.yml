@@ -20,7 +20,7 @@ jobs:
             artifact: AppStation-windows
             spec: AppStation.win.spec
             python: '3.12'
-          - os: macos-13
+          - os: macos-15-intel
             name: macOS Intel
             artifact: AppStation-macos-intel
             spec: AppStation.spec
@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
-          $env:Path += ";C:\Program Files\NSIS"
+          $env:Path += ";C:\Program Files\NSIS;C:\Program Files (x86)\NSIS"
           makensis installer.nsi
           Compress-Archive -Path dist\AppStation\* -DestinationPath AppStation-windows-portable.zip -Force
 
