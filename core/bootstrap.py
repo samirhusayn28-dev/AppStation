@@ -239,7 +239,8 @@ class BootstrapManager:
             try:
                 result = subprocess.run(
                     [str(java), "-version"], capture_output=True, text=True,
-                    timeout=15, env=self._env())
+                    timeout=15, env=self._env(),
+                    creationflags=PlatformUtils.no_window_flags())
                 output = (result.stderr or "") + (result.stdout or "")
                 major = parse_java_major(output)
                 if major is not None and major >= 17:
@@ -263,7 +264,8 @@ class BootstrapManager:
                 try:
                     result = subprocess.run(
                         [str(candidate), "-version"], capture_output=True,
-                        text=True, timeout=15)
+                        text=True, timeout=15,
+                        creationflags=PlatformUtils.no_window_flags())
                     output = (result.stderr or "") + (result.stdout or "")
                     if (parse_java_major(output) or 0) >= 17:
                         return str(Path(env_home))
@@ -544,7 +546,8 @@ class BootstrapManager:
             result = subprocess.run(
                 [str(sdkmanager), "--licenses"],
                 input="y\n" * 100, capture_output=True, text=True,
-                timeout=180, env=self._env())
+                timeout=180, env=self._env(),
+                creationflags=PlatformUtils.no_window_flags())
             if result.returncode == 0 or self.licenses_accepted():
                 self.state.licenses_accepted = True
                 self._save_state()
@@ -568,7 +571,8 @@ class BootstrapManager:
                 proc = subprocess.Popen(
                     [str(sdkmanager), package], stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1, env=self._env())
+                    text=True, bufsize=1, env=self._env(),
+                    creationflags=PlatformUtils.no_window_flags())
                 buffer: List[str] = []
                 last_line = ""
                 while True:

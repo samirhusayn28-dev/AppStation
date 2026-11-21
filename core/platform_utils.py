@@ -17,6 +17,19 @@ class PlatformUtils:
     IS_WINDOWS = sys.platform == "win32"
     IS_MACOS = sys.platform == "darwin"
     IS_LINUX = sys.platform.startswith("linux")
+
+    @classmethod
+    def no_window_flags(cls) -> int:
+        """Creation flags that stop Windows opening a console for a child.
+
+        AppStation is a GUI app with no console.  On Windows, starting another
+        console program (adb, sdkmanager, powershell, systeminfo, ...) without
+        this flag makes Windows create a visible console window for it, which
+        is why users saw a stream of black terminals during setup and startup.
+        """
+        if cls.IS_WINDOWS:
+            return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return 0
     
     @classmethod
     def get_app_data_dir(cls) -> Path:
@@ -220,7 +233,8 @@ class PlatformUtils:
             # Check Hyper-V
             out = subprocess.run(
                 ["powershell", "-Command", "Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All | Select-Object State"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                creationflags=cls.no_window_flags()
             )
             if "Enabled" in out.stdout:
                 result["hyper_v"] = True
@@ -228,7 +242,8 @@ class PlatformUtils:
             # Check WHPX
             out = subprocess.run(
                 ["powershell", "-Command", "Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform | Select-Object State"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                creationflags=cls.no_window_flags()
             )
             if "Enabled" in out.stdout:
                 result["whpx"] = True
@@ -237,7 +252,7 @@ class PlatformUtils:
             try:
                 aehd = subprocess.run(
                     ["sc", "query", "aehd"], capture_output=True, text=True,
-                    timeout=10)
+                    timeout=10, creationflags=cls.no_window_flags())
                 if aehd.returncode == 0 and "RUNNING" in aehd.stdout.upper():
                     result["aehd_driver"] = True
                     result["aehd"] = True
@@ -253,7 +268,8 @@ class PlatformUtils:
             # boot ("emulator died during boot").
             try:
                 out = subprocess.run(
-                    ["systeminfo"], capture_output=True, text=True, timeout=10
+                    ["systeminfo"], capture_output=True, text=True, timeout=10,
+                    creationflags=cls.no_window_flags()
                 )
                 if "Virtualization Enabled In Firmware : Yes" in out.stdout:
                     result["firmware_virtualization"] = True
@@ -310,7 +326,8 @@ class PlatformUtils:
         if not cls.IS_WINDOWS:
             return False, "This option is only available on Windows"
         try:
-            subprocess.Popen(["optionalfeatures.exe"], close_fds=True)
+            subprocess.Popen(["optionalfeatures.exe"], close_fds=True,
+                             creationflags=cls.no_window_flags())
             return True, (
                 "Opened Windows Features. Check 'Windows Hypervisor Platform' "
                 "(or 'Hyper-V'), click OK, then restart your computer.")
@@ -431,7 +448,8 @@ class PlatformUtils:
             env=merged_env,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            creationflags=cls.no_window_flags()
         )
     
     @classmethod
@@ -477,7 +495,7 @@ class PlatformUtils:
                     cwd=str(cwd) if cwd else None,
                     env=merged_env,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS,
+                    | cls.no_window_flags(),
                     stdout=stdout,
                     stderr=stderr,
                 )

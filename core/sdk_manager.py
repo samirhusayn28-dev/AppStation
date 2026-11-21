@@ -410,6 +410,7 @@ class SDKManager:
                 text=True,
                 bufsize=1,
                 env=self._sdkmanager_env(),
+                creationflags=PlatformUtils.no_window_flags(),
             )
         except Exception:
             return ""
@@ -674,6 +675,7 @@ class SDKManager:
                 text=True,
                 bufsize=1,
                 env=self._sdkmanager_env(),
+                creationflags=PlatformUtils.no_window_flags(),
             )
         except Exception as e:
             return False, f"Failed to start sdkmanager: {e}"
@@ -922,7 +924,8 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=self._sdkmanager_env()
+                env=self._sdkmanager_env(),
+                creationflags=PlatformUtils.no_window_flags()
             )
 
             if result.returncode == 0:
@@ -1021,7 +1024,8 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                env=self._sdkmanager_env()
+                env=self._sdkmanager_env(),
+                creationflags=PlatformUtils.no_window_flags()
             )
             if result.returncode == 0 and f"Name: {name}" in result.stdout:
                 if not force:
@@ -1040,7 +1044,8 @@ class SDKManager:
                 capture_output=True,
                 text=True,
                 timeout=180,
-                env=self._sdkmanager_env()
+                env=self._sdkmanager_env(),
+                creationflags=PlatformUtils.no_window_flags()
             )
 
             if result.returncode == 0:

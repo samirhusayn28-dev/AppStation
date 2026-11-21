@@ -642,7 +642,8 @@ class ScreenStream:
             result = subprocess.run(
                 [adb_bin, "-s", serial, "shell",
                  "pkill -f com.genymobile.scrcpy.Server"],
-                capture_output=True, timeout=10)
+                capture_output=True, timeout=10,
+                creationflags=PlatformUtils.no_window_flags())
             # pkill exists: 0 = killed, 1 = nothing to kill.  Either way the
             # device is ready, so skip the expensive `ps` scan.
             if result.returncode in (0, 1):
@@ -653,7 +654,8 @@ class ScreenStream:
         try:
             result = subprocess.run(
                 [adb_bin, "-s", serial, "shell", "ps", "-A"],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, timeout=10,
+                creationflags=PlatformUtils.no_window_flags())
             if result.returncode == 0:
                 for line in (result.stdout or "").splitlines():
                     if "com.genymobile.scrcpy.Server" in line:
@@ -662,7 +664,8 @@ class ScreenStream:
                             subprocess.run(
                                 [adb_bin, "-s", serial, "shell",
                                  "kill", "-9", fields[1]],
-                                capture_output=True, timeout=5)
+                                capture_output=True, timeout=5,
+                                creationflags=PlatformUtils.no_window_flags())
         except Exception:
             pass
 
@@ -676,7 +679,8 @@ class ScreenStream:
             result = subprocess.run(
                 [adb_bin, "-s", serial, "shell", "ls", "-l",
                  REMOTE_SERVER_PATH],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, timeout=10,
+                creationflags=PlatformUtils.no_window_flags())
         except Exception:
             return None
         if result.returncode != 0:
@@ -710,7 +714,8 @@ class ScreenStream:
             result = subprocess.run(
                 [adb_bin, "-s", serial, "shell", "ls", "-l",
                  REMOTE_SERVER_PATH],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, timeout=10,
+                creationflags=PlatformUtils.no_window_flags())
         except Exception as exc:  # noqa: BLE001
             return False, f"ls -l failed: {exc}"
         output = (result.stdout or "").strip()
@@ -739,7 +744,8 @@ class ScreenStream:
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, start_new_session=True)
+            text=True, bufsize=1, start_new_session=True,
+            creationflags=PlatformUtils.no_window_flags())
         self._server_log.clear()
         self._server_proc = proc
         self._log_thread = threading.Thread(
@@ -815,7 +821,8 @@ class ScreenStream:
             result = subprocess.run(
                 [adb_bin, "-s", serial, "forward", f"tcp:{port}",
                  f"localabstract:{ABSTRACT_SOCKET_NAME}"],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, timeout=10,
+                creationflags=PlatformUtils.no_window_flags())
             return result.returncode == 0
         except Exception:
             return False
@@ -1098,7 +1105,8 @@ class ScreenStream:
         while not self._stop.is_set() and not self._fallback_stop.is_set():
             started = time.time()
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=20)
+                result = subprocess.run(cmd, capture_output=True, timeout=20,
+                                        creationflags=PlatformUtils.no_window_flags())
                 data = result.stdout
                 if data and not self._stop.is_set():
                     image = _raw_screencap_to_qimage(data)
@@ -1164,7 +1172,8 @@ class ScreenStream:
                 subprocess.run(
                     [str(PlatformUtils.get_adb_path()), "-s", self._serial,
                      "forward", "--remove", f"tcp:{self._forward_port}"],
-                    capture_output=True, timeout=10)
+                    capture_output=True, timeout=10,
+                    creationflags=PlatformUtils.no_window_flags())
             except Exception:
                 pass
             self._forward_port = None

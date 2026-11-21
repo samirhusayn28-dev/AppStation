@@ -6,6 +6,8 @@
 2. The start command must use ``-accel auto`` so the emulator's own probe is
    authoritative and a missing backend cannot kill the process.
 3. Boot errors must include the captured emulator log tail.
+4. The GUI app must never open a visible console for its child processes
+   (adb, sdkmanager, powershell, systeminfo, optionalfeatures, ...).
 """
 
 import sys
@@ -78,6 +80,55 @@ class TestWindowsVirtualizationDetection(unittest.TestCase):
         info = self._check(aehd_running=True)
         self.assertTrue(info["supported"])
         self.assertEqual(info["backend"], "aehd")
+
+    def test_windows_probes_hide_console(self):
+        """Every host probe must run without spawning a console window."""
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(kwargs)
+            return _completed()
+
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True), \
+                mock.patch("core.platform_utils.subprocess.CREATE_NO_WINDOW",
+                           0x08000000, create=True), \
+                mock.patch("core.platform_utils.subprocess.run",
+                           side_effect=fake_run):
+            PlatformUtils.check_virtualization_windows()
+
+        self.assertGreaterEqual(len(calls), 4)
+        for kwargs in calls:
+            self.assertEqual(kwargs.get("creationflags"), 0x08000000)
+
+
+class TestNoConsoleWindows(unittest.TestCase):
+    """The GUI app must not open a terminal for any child process."""
+
+    def test_no_window_flags_on_windows(self):
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True), \
+                mock.patch("core.platform_utils.subprocess.CREATE_NO_WINDOW",
+                           0x08000000, create=True):
+            self.assertEqual(PlatformUtils.no_window_flags(), 0x08000000)
+
+    def test_no_window_flags_on_other_platforms(self):
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", False):
+            self.assertEqual(PlatformUtils.no_window_flags(), 0)
+
+    def test_start_detached_process_sets_no_window_on_windows(self):
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True), \
+                mock.patch.object(PlatformUtils, "get_sdk_dir",
+                                  return_value=Path("sdk")), \
+                mock.patch("core.platform_utils.subprocess.CREATE_NO_WINDOW",
+                           0x08000000, create=True), \
+                mock.patch("core.platform_utils.subprocess"
+                           ".CREATE_NEW_PROCESS_GROUP",
+                           0x00000200, create=True), \
+                mock.patch("core.platform_utils.subprocess.Popen") as popen:
+            PlatformUtils.start_detached_process(["adb", "devices"])
+
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertTrue(flags & 0x08000000)
+        self.assertTrue(flags & 0x00000200)
 
 
 class TestAccelStartCommand(unittest.TestCase):

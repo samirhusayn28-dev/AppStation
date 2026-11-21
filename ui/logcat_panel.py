@@ -65,6 +65,7 @@ class LogcatWorker(QThread):
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
+                creationflags=PlatformUtils.no_window_flags(),
             )
             
             for line in self._process.stdout:
@@ -85,7 +86,8 @@ class LogcatWorker(QThread):
         try:
             result = subprocess.run(
                 [str(adb), "shell", "pidof", self._package_filter],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                creationflags=PlatformUtils.no_window_flags()
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split()[0]
