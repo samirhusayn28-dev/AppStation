@@ -1,8 +1,8 @@
-; NSIS installer for AppStation 1.0.0 (Windows)
+; NSIS installer for AppStation 1.0.1 (Windows)
 ; Produces AppStation-Setup-1.0.0.exe from the PyInstaller onedir build.
 
 !define APP_NAME "AppStation"
-!define APP_VERSION "1.0.0"
+!define APP_VERSION "1.0.1"
 !define APP_PUBLISHER "Samir Husayn"
 !define APP_URL "https://github.com/samirhusayn28-dev/AppStation"
 !define APP_EXE "AppStation.exe"

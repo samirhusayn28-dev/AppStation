@@ -244,37 +244,52 @@ class PlatformUtils:
             except Exception:
                 pass
 
-            # Check if virtualization is enabled in BIOS (via systeminfo)
-            out = subprocess.run(
-                ["systeminfo"], capture_output=True, text=True, timeout=10
-            )
-            if "Virtualization Enabled In Firmware : Yes" in out.stdout:
-                result["firmware_virtualization"] = True
-                # Keep the historical key populated for callers/tests.
-                result["aehd"] = True
+            # Check if virtualization is enabled in BIOS (via systeminfo).
+            # This is INFORMATIONAL ONLY: VT-x/SVM in firmware is necessary but
+            # not sufficient.  The Android emulator still needs a real Windows
+            # hypervisor (WHPX/Hyper-V) or the AEHD driver.  Treating firmware
+            # support as a usable accelerator made us pass `-accel on` on hosts
+            # with no backend, which makes the emulator panic and exit during
+            # boot ("emulator died during boot").
+            try:
+                out = subprocess.run(
+                    ["systeminfo"], capture_output=True, text=True, timeout=10
+                )
+                if "Virtualization Enabled In Firmware : Yes" in out.stdout:
+                    result["firmware_virtualization"] = True
+            except Exception:
+                pass
 
+            # Only an actual hypervisor/driver can accelerate the emulator.
             result["supported"] = (result["hyper_v"] or result["whpx"]
-                                   or result["aehd"])
+                                   or result["aehd_driver"])
             if result["whpx"]:
                 result["backend"] = "whpx"
             elif result["aehd_driver"]:
                 result["backend"] = "aehd"
             elif result["hyper_v"]:
                 result["backend"] = "hyperv"
-            elif result["firmware_virtualization"]:
-                result["backend"] = "firmware"
-            
+            else:
+                result["backend"] = "none"
+
             if not result["supported"]:
-                result["message"] = (
-                    "Hardware virtualization is not enabled. Please enable it:\n"
-                    "1. Restart your PC and enter BIOS/UEFI (usually F2, F10, Del, or Esc)\n"
-                    "2. Enable 'Virtualization Technology', 'VT-x', 'SVM', or 'AMD-V'\n"
-                    "3. In Windows, enable 'Windows Hypervisor Platform' or 'Hyper-V':\n"
-                    "   - Open 'Turn Windows features on or off'\n"
-                    "   - Check 'Windows Hypervisor Platform' (recommended)\n"
-                    "   - Or check 'Hyper-V' (requires Windows Pro/Enterprise)\n"
-                    "4. Restart your computer"
-                )
+                if result["firmware_virtualization"]:
+                    result["message"] = (
+                        "Virtualization is enabled in firmware, but no Windows "
+                        "hypervisor is active. Enable 'Windows Hypervisor "
+                        "Platform' (or Hyper-V) in Windows Features, then restart."
+                    )
+                else:
+                    result["message"] = (
+                        "Hardware virtualization is not enabled. Please enable it:\n"
+                        "1. Restart your PC and enter BIOS/UEFI (usually F2, F10, Del, or Esc)\n"
+                        "2. Enable 'Virtualization Technology', 'VT-x', 'SVM', or 'AMD-V'\n"
+                        "3. In Windows, enable 'Windows Hypervisor Platform' or 'Hyper-V':\n"
+                        "   - Open 'Turn Windows features on or off'\n"
+                        "   - Check 'Windows Hypervisor Platform' (recommended)\n"
+                        "   - Or check 'Hyper-V' (requires Windows Pro/Enterprise)\n"
+                        "4. Restart your computer"
+                    )
             else:
                 result["message"] = "Virtualization is available"
                 

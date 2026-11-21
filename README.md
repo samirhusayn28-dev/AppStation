@@ -58,8 +58,10 @@ Download the installer for your platform from the latest release:
 
 | Platform | Asset |
 |----------|-------|
-| macOS (Intel and Apple Silicon) | `AppStation-1.0.0.dmg` or `AppStation-1.0.0.pkg` |
-| Windows | `AppStation-Setup-1.0.0.exe` |
+| macOS Intel | `AppStation-macos-intel.dmg` |
+| macOS Apple Silicon | `AppStation-macos-arm64.dmg` |
+| macOS PKG | `AppStation-1.0.1.pkg` |
+| Windows | `AppStation-Setup-1.0.1.exe` |
 | Windows portable | `AppStation-windows-portable.zip` |
 
 On macOS, if Gatekeeper blocks the first launch, right-click the app and choose **Open**.
@@ -78,7 +80,7 @@ python -m pip install pyinstaller
 ```bash
 pyinstaller --clean --noconfirm AppStation.spec
 hdiutil create -volname "AppStation" \
-  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.0.dmg
+  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.1.dmg
 ```
 
 **Windows**

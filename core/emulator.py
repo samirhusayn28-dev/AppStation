@@ -162,11 +162,13 @@ class EmulatorManager:
         cmd.extend(["-cores", str(config.cores)])
         cmd.extend(["-gpu", gpu_mode])
 
-        accel = PlatformUtils.get_acceleration_info()
-        if accel.get("supported"):
-            # Explicit: fail fast instead of silently running the CPU in
-            # software if the host accelerator is missing.
-            cmd.extend(["-accel", "on"])
+        # Use `auto`, never `on`.  The emulator enables acceleration when its
+        # own probe says it is ready and otherwise falls back to software
+        # emulation.  `on` makes the emulator panic and exit immediately when
+        # no accelerator is available, which surfaced to users as
+        # "Emulator process died during boot" on Windows hosts where the host
+        # probe can be optimistic.  Letting the emulator decide is authoritative.
+        cmd.extend(["-accel", "auto"])
 
         if config.no_audio:
             cmd.append("-no-audio")
@@ -240,6 +242,20 @@ class EmulatorManager:
         except Exception:
             pass
         return ""
+
+    def _emulator_error_detail(self, limit: int = 1200) -> str:
+        """Tail of the emulator log, included in boot-error messages.
+
+        Without this, a failed boot only said "died during boot" and gave the
+        user nothing actionable.  The emulator writes the real reason (bad
+        accelerator, GPU, AVD, ...) to its own log.
+        """
+        text = self._read_emulator_log().strip()
+        if not text:
+            return ""
+        if len(text) > limit:
+            text = text[-limit:]
+        return "Emulator log (tail):\n" + text
 
     def _verify_acceleration_and_gpu(self,
                                      log_path: Optional[Path] = None):
@@ -466,7 +482,9 @@ class EmulatorManager:
 
         while time.time() - start_time < timeout:
             if not self.is_running():
-                return False, "Emulator process died during boot"
+                detail = self._emulator_error_detail()
+                return False, ("Emulator process died during boot"
+                               + (f"\n{detail}" if detail else ""))
 
             if not self._serial:
                 self._serial = self._detect_serial()
@@ -505,6 +523,9 @@ class EmulatorManager:
             time.sleep(1)
 
         error_msg = f"Boot timeout after {timeout} seconds"
+        detail = self._emulator_error_detail()
+        if detail:
+            error_msg += f"\n{detail}"
         self._log(error_msg)
         if self._boot_callback:
             self._boot_callback(False)
