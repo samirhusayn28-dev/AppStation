@@ -297,12 +297,13 @@ class TestScreenViewInputSignals(unittest.TestCase):
         self.assertEqual(self.drawers, [])
 
     def test_windows_upward_burst_opens_drawer(self):
-        """Windows wheel events have no phase/pixel delta and never set
-        inverted(); they must still follow the fingers like macOS."""
+        """Windows precision-trackpad deltas have no phase/pixel data and
+        never set inverted().  They follow the same polarity as macOS: a
+        positive raw delta means the fingers moved up."""
         with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
             for _ in range(4):
                 self.view.wheelEvent(self._wheel_event(
-                    -40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                    40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
                     inverted=False))
         self.assertEqual(len(self.drawers), 1)
         self.assertEqual(self.scrolls[0][3], -40)
@@ -311,7 +312,7 @@ class TestScreenViewInputSignals(unittest.TestCase):
         with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
             for _ in range(4):
                 self.view.wheelEvent(self._wheel_event(
-                    40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                    -40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
                     inverted=False))
         self.assertEqual(self.drawers, [])
 
@@ -322,6 +323,20 @@ class TestScreenViewInputSignals(unittest.TestCase):
                     -120, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
                     inverted=False))
         self.assertEqual(self.drawers, [])
+
+    def test_invert_preference_flips_the_gesture(self):
+        """The context-menu override rescues drivers with the opposite sign."""
+        from core.settings import settings
+
+        with mock.patch.object(settings, "_data", dict(settings._data)), \
+                mock.patch.object(type(settings), "save", return_value=True):
+            settings.invert_scroll = False
+            with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
+                for _ in range(4):
+                    self.view.wheelEvent(self._wheel_event(
+                        -40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                        inverted=False))
+        self.assertEqual(len(self.drawers), 1)
 
     def test_momentum_after_a_swipe_does_not_reopen_the_drawer(self):
         """Momentum keeps scrolling but must not toggle the drawer twice."""

@@ -28,6 +28,7 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from core.platform_utils import PlatformUtils
+from core.settings import settings
 
 
 class ScreenView(QWidget):
@@ -411,12 +412,12 @@ class ScreenView(QWidget):
         pixel = event.pixelDelta()
         phase = event.phase()
 
-        # Qt reports which way the device is inverted on macOS.  Windows never
-        # sets that flag, and its precision trackpads already report natural
-        # deltas (fingers-up is negative), so flipping there is what made every
-        # Windows gesture behave backwards.  Normalise to *finger movement*:
-        # negative dy always means the fingers moved up, on either OS.
-        invert = (not event.inverted()) and not PlatformUtils.IS_WINDOWS
+        # Normalise to *finger movement*: negative dy means the fingers moved
+        # up.  Qt reports the device polarity on macOS; Windows never sets
+        # inverted(), so the same rule is used there.  A user preference can
+        # override this for trackpad drivers that report the opposite way.
+        pref = settings.invert_scroll
+        invert = (not event.inverted()) if pref is None else bool(pref)
         sign = -1 if invert else 1
         dx, dy = angle.x() * sign, angle.y() * sign
 

@@ -22,6 +22,10 @@ class Settings:
         "display_mode": "embedded",
         # Keep the frameless preview window above all other windows.
         "always_on_top": True,
+        # None = follow the platform's reported scroll polarity.  True/False
+        # let the user flip two-finger gestures if their trackpad driver
+        # reports deltas the other way round.
+        "invert_scroll": None,
         "idle_timeout_minutes": 10,
         "auto_reinstall": False,
         # Balanced defaults: 720p / 4 Mbps is plenty for the ~250 px preview
@@ -160,6 +164,16 @@ class Settings:
     @always_on_top.setter
     def always_on_top(self, value: bool):
         self.set("always_on_top", bool(value))
+
+    @property
+    def invert_scroll(self):
+        """Override the two-finger gesture direction, or None for auto."""
+        value = self._data.get("invert_scroll", None)
+        return None if value is None else bool(value)
+
+    @invert_scroll.setter
+    def invert_scroll(self, value):
+        self.set("invert_scroll", None if value is None else bool(value))
 
     @property
     def display_mode(self) -> str:

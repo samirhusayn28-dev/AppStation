@@ -27,9 +27,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Enable high DPI scaling before creating QApplication
+# Enable high DPI scaling before creating QApplication.  We deliberately do
+# NOT set QT_AUTO_SCREEN_SCALE_FACTOR: on Windows it applies a different factor
+# per monitor and made the preview a different size/aspect from macOS.
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
 # Record when the process started so the startup time can be reported.
 _T0 = time.perf_counter()

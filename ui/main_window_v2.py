@@ -275,12 +275,16 @@ class AspectColumnLayout(QLayout):
         if len(self._items) == 1:
             self._items[0].setGeometry(rect)
             return
-        screen_w, screen_h, nav_h = self.column_size(rect.width(),
-                                                     rect.height())
-        x = rect.x() + (rect.width() - screen_w) // 2
-        y = rect.y() + (rect.height() - (screen_h + nav_h)) // 2
-        self._items[0].setGeometry(QRect(x, y, screen_w, screen_h))
-        self._items[1].setGeometry(QRect(x, y + screen_h, screen_w, nav_h))
+        # The screen fills the whole column: dragging a window edge must make
+        # the preview itself bigger/smaller, not add empty letterbox space.
+        # ScreenView still preserves the *image* aspect while the guest is
+        # being reflowed to the new shape.
+        nav_h = self._clamp_nav(self.NAV_FRACTION * rect.width())
+        screen_h = max(1, rect.height() - nav_h)
+        self._items[0].setGeometry(
+            QRect(rect.x(), rect.y(), rect.width(), screen_h))
+        self._items[1].setGeometry(
+            QRect(rect.x(), rect.y() + screen_h, rect.width(), nav_h))
 
 
 class DetachedPreviewWindow(QWidget):
@@ -299,6 +303,10 @@ class DetachedPreviewWindow(QWidget):
     close_requested = pyqtSignal()
     always_on_top_changed = pyqtSignal(bool)
     nav_action = pyqtSignal(str)
+    # Emitted when a manual drag/resize finishes so the owner can reflow the
+    # Android guest resolution to the new preview size.
+    resize_finished = pyqtSignal(int, int, int, int)  # old w/h -> new w/h
+    invert_scroll_changed = pyqtSignal(bool)
 
     # Thin transparent ring around the screen: outer RESIZE_EDGE px resize,
     # the remaining (MARGIN - RESIZE_EDGE) px move the window.
@@ -342,6 +350,7 @@ class DetachedPreviewWindow(QWidget):
         self._manual_edge = None
         self._manual_start_geom = None
         self._manual_start_pos = None
+        self._resize_start_screen = None  # (w, h) of the screen at drag start
 
         # -- column (screen + nav bar) -------------------------------------
         self._column = QWidget(self)
@@ -527,16 +536,27 @@ class DetachedPreviewWindow(QWidget):
         return bool(mods & (Qt.KeyboardModifier.AltModifier
                             | Qt.KeyboardModifier.MetaModifier))
 
+    CORNERS = frozenset({
+        "resize-top-left", "resize-top-right",
+        "resize-bottom-left", "resize-bottom-right",
+    })
+
+    @classmethod
+    def _is_corner(cls, edge) -> bool:
+        return edge in cls.CORNERS
+
     @staticmethod
     def _manual_geometry(edge, dx, dy, start, aspect, min_size,
                          margin=10, nav_fraction=0.09, nav_min=36,
-                         nav_max=56):
+                         nav_max=56, aspect_lock=True):
         """Window geometry after dragging ``edge`` by (dx, dy).
 
-        Pure geometry (no Qt calls) so it can be unit-tested.  The *screen*
-        keeps the guest aspect ratio and the window is rebuilt as screen +
-        nav bar + the thin margin, so the screen border always sits exactly
-        ``margin`` px from the window border.
+        Pure geometry (no Qt calls) so it can be unit-tested.  Edge drags are
+        *free*: only the dragged dimension changes and the opposite edge stays
+        anchored.  Corner drags keep the guest aspect so the screen scales up
+        evenly in both directions.  The window is screen + nav bar + margin,
+        so the screen border always sits exactly ``margin`` px from the window
+        border.
         """
         def nav_for(screen_w):
             return max(nav_min, min(
@@ -552,6 +572,23 @@ class DetachedPreviewWindow(QWidget):
 
         left, top = start.x(), start.y()
         width, height = start.width(), start.height()
+
+        if not aspect_lock:
+            # Free resize: move only the dragged edge(s), anchor the opposite
+            # side.  The Android guest is reflowed to this shape on release.
+            old_right = left + width
+            old_bottom = top + height
+            if "left" in edge:
+                new_left = min(old_right - min_size.width(), left + dx)
+                left, width = new_left, old_right - new_left
+            elif "right" in edge:
+                width = max(min_size.width(), width + dx)
+            if "top" in edge:
+                new_top = min(old_bottom - min_size.height(), top + dy)
+                top, height = new_top, old_bottom - new_top
+            elif "bottom" in edge:
+                height = max(min_size.height(), height + dy)
+            return QRect(left, top, width, height)
 
         if "left" in edge:
             width = max(min_size.width(), width - dx)
@@ -615,6 +652,21 @@ class DetachedPreviewWindow(QWidget):
         self._manual_edge = edge
         self._manual_start_geom = self.geometry()
         self._manual_start_pos = event.globalPosition().toPoint()
+        if mode == "resize":
+            # Remember the screen size before the drag so the owner can scale
+            # the Android guest resolution by the same ratio.
+            _, _, sw, sh = self._screen_rect_in_window()
+            self._resize_start_screen = (max(1, sw), max(1, sh))
+        else:
+            self._resize_start_screen = None
+        # Without an explicit grab, moving the pointer outside this frameless
+        # window makes Qt deliver the release elsewhere.  ``_manual_mode`` then
+        # stays set forever and every later press is swallowed as a resize,
+        # which is why the preview went completely unresponsive after a drag.
+        try:
+            self.grabMouse()
+        except Exception:
+            pass
         if mode == "move":
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
@@ -657,7 +709,8 @@ class DetachedPreviewWindow(QWidget):
                     self._min_size, self._margin,
                     AspectColumnLayout.NAV_FRACTION,
                     AspectColumnLayout.NAV_MIN,
-                    AspectColumnLayout.NAV_MAX))
+                    AspectColumnLayout.NAV_MAX,
+                    aspect_lock=self._is_corner(self._manual_edge)))
             event.accept()
             return
 
@@ -670,13 +723,36 @@ class DetachedPreviewWindow(QWidget):
             self.unsetCursor()
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event):  # noqa: N802
+    def _end_manual(self, emit_resize: bool = False):
+        """Clear drag state and release the mouse, whatever happened."""
+        was_resize = self._manual_mode == "resize"
+        start = self._resize_start_screen
         self._manual_mode = None
         self._manual_edge = None
         self._manual_start_geom = None
         self._manual_start_pos = None
+        self._resize_start_screen = None
+        try:
+            if self.mouseGrabber() is self:
+                self.releaseMouse()
+        except Exception:
+            pass
         self.unsetCursor()
+        if emit_resize and was_resize and start:
+            _, _, sw, sh = self._screen_rect_in_window()
+            sw, sh = max(1, sw), max(1, sh)
+            if (sw, sh) != start:
+                self.resize_finished.emit(start[0], start[1], sw, sh)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        self._end_manual(emit_resize=True)
         super().mouseReleaseEvent(event)
+
+    def hideEvent(self, event):  # noqa: N802
+        # A hidden/grabbed window never gets its release; reset so the next
+        # interaction cannot be mistaken for a still-running resize.
+        self._end_manual()
+        super().hideEvent(event)
 
     def leaveEvent(self, event):  # noqa: N802
         self.unsetCursor()
@@ -707,6 +783,13 @@ class DetachedPreviewWindow(QWidget):
         aot_act.triggered.connect(
             lambda _c: self.always_on_top_changed.emit(not self._always_on_top)
         )
+
+        menu.addSeparator()
+        invert_act = menu.addAction("Invert gesture direction")
+        invert_act.setCheckable(True)
+        invert_act.setChecked(bool(settings.invert_scroll))
+        invert_act.triggered.connect(
+            lambda checked: self.invert_scroll_changed.emit(bool(checked)))
         menu.exec(self.mapToGlobal(pos))
 
     def set_always_on_top(self, checked: bool):
@@ -1095,6 +1178,15 @@ class MainWindowV2(QMainWindow):
         self._scroll_idle_timer.setSingleShot(True)
         self._scroll_idle_timer.timeout.connect(self._end_scroll_gesture)
 
+        # Resizing the preview changes the Android resolution.  Debounce the
+        # many resize events from one drag into a single `wm size` + stream
+        # restart after the user lets go.
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.timeout.connect(self._apply_preview_reflow)
+        self._pending_reflow = None
+        self._reflowing = False
+
         # State
         self._current_apk: Optional[Path] = None
         self._current_package: Optional[str] = None
@@ -1401,16 +1493,23 @@ class MainWindowV2(QMainWindow):
             self.detached_window.always_on_top_changed.connect(
                 self._on_always_on_top_changed)
             self.detached_window.nav_action.connect(self._on_device_action)
-            # Default size: at most ~75% of the available screen height; the
-            # window is then sized to the screen + nav bar + thin margin.
-            available_h = 800
+            self.detached_window.resize_finished.connect(
+                self._on_preview_resized)
+            self.detached_window.invert_scroll_changed.connect(
+                self._on_invert_scroll_changed)
+            # A fixed default height keeps the preview the same size on every
+            # OS; only clamp it when the current display is too small.  Using
+            # a percentage of availableGeometry() made Windows (taskbar + DPI)
+            # start noticeably shorter than macOS.
+            target_h = 800
             try:
                 screen = QApplication.primaryScreen()
                 if screen is not None:
-                    available_h = screen.availableGeometry().height()
+                    target_h = min(target_h,
+                                   screen.availableGeometry().height() - 20)
             except Exception:
                 pass
-            target_h = min(round(available_h * 0.75), 900)
+            target_h = max(320, target_h)
             target_w = max(
                 240,
                 self.detached_window.screen_width_for_window_height(target_h))
@@ -1421,7 +1520,9 @@ class MainWindowV2(QMainWindow):
                     restored = self.detached_window.restoreGeometry(saved)
                 except Exception:
                     restored = False
-            if not restored:
+            if restored:
+                self._normalize_preview_geometry()
+            else:
                 self.detached_window.resize(
                     self.detached_window.window_size_for_screen_width(
                         target_w))
@@ -1434,6 +1535,45 @@ class MainWindowV2(QMainWindow):
             self._set_status(f"Preview window error: {exc}")
             raise
 
+    def _normalize_preview_geometry(self):
+        """Re-fit a restored preview so it matches macOS on any display.
+
+        ``saveGeometry()`` stores device pixels, so the same saved bytes come
+        back a different size when Windows DPI/taskbar dimensions differ from
+        the machine that saved them.  That is why the Windows preview looked
+        "pressed from the top".  Keep the saved position but recompute the
+        size from the guest aspect whenever it drifted or no longer fits.
+        """
+        win = self.detached_window
+        if win is None:
+            return
+        try:
+            avail = QApplication.primaryScreen().availableGeometry()
+        except Exception:
+            avail = None
+        margin = win._margin
+        sw = max(1, win.width() - 2 * margin)
+        nav = win._nav_height(sw)
+        sh = max(1, win.height() - 2 * margin - nav)
+        aspect = sw / float(sh)
+        target = win.guest_aspect()
+        wrong_aspect = abs(aspect - target) > 0.08
+        too_big = bool(avail and (win.width() > avail.width()
+                                  or win.height() > avail.height()))
+        if not (wrong_aspect or too_big):
+            return
+        max_h = min(900, avail.height() - 20) if avail else 900
+        max_h = max(300, max_h)
+        width = win.screen_width_for_window_height(max_h)
+        win.resize(win.window_size_for_screen_width(width))
+        if avail is not None:
+            pos = win.pos()
+            x = min(max(pos.x(), avail.x()),
+                    max(avail.x(), avail.right() - win.width()))
+            y = min(max(pos.y(), avail.y()),
+                    max(avail.y(), avail.bottom() - win.height()))
+            win.move(x, y)
+
     def _close_detached_preview(self):
         """Close the detached preview window."""
         self._preview_wanted = False
@@ -1445,6 +1585,86 @@ class MainWindowV2(QMainWindow):
                 pass
             self.detached_window.close()
             self.detached_window = None
+
+    def _on_invert_scroll_changed(self, checked: bool):
+        """Persist the preview's gesture-direction preference."""
+        settings.invert_scroll = bool(checked)
+        self._set_status(
+            "Gesture direction inverted" if checked
+            else "Gesture direction restored")
+
+    def _on_preview_resized(self, old_w: int, old_h: int,
+                            new_w: int, new_h: int):
+        """Queue a guest-resolution change after a preview drag finishes."""
+        if not self._target_ready():
+            return
+        self._pending_reflow = (int(old_w), int(old_h),
+                                int(new_w), int(new_h))
+        self._reflow_timer.start(450)
+
+    def _apply_preview_reflow(self):
+        """Match the Android resolution to the new preview size.
+
+        Density is left untouched, so a wider/taller preview simply shows more
+        of the UI at the same icon size instead of stretching the pixels.  The
+        stream is restarted because scrcpy fixes its video size at startup.
+        """
+        pending = self._pending_reflow
+        self._pending_reflow = None
+        if not pending or self._reflowing or not self._target_ready():
+            return
+        old_w, old_h, new_w, new_h = pending
+        if min(old_w, old_h, new_w, new_h) <= 0:
+            return
+        try:
+            current = self._adb.get_screen_size()
+        except Exception:
+            current = None
+        if not current:
+            current = (self.screen_view._screen_w, self.screen_view._screen_h)
+        if not current or min(current) <= 0:
+            return
+        target_w = max(1, int(round(current[0] * new_w / float(old_w))))
+        target_h = max(1, int(round(current[1] * new_h / float(old_h))))
+        if (target_w, target_h) == tuple(int(v) for v in current):
+            return
+
+        package = self._current_package
+        activity = self._current_activity
+        self._reflowing = True
+        self._stop_screen_stream(quiet=True)
+        self._set_status(f"Resizing Android to {target_w}x{target_h}...")
+
+        def _work():
+            ok, msg = self._adb.set_screen_size(target_w, target_h)
+            if not ok:
+                return False, msg or "wm size failed"
+            if package:
+                try:
+                    self._adb.force_stop(package)
+                    if activity:
+                        relaunch = self._adb.start_activity(package, activity)
+                    else:
+                        relaunch = self._adb.shell(
+                            f"monkey -p {package} "
+                            "-c android.intent.category.LAUNCHER 1")
+                    if not relaunch[0]:
+                        return True, (
+                            f"Android {target_w}x{target_h} "
+                            f"(app relaunch: {relaunch[1]})")
+                except Exception as exc:
+                    return True, (
+                        f"Android {target_w}x{target_h} "
+                        f"(relaunch skipped: {exc})")
+            return True, f"Android resolution {target_w}x{target_h}"
+
+        def _done(success: bool, message: str):
+            self._reflowing = False
+            self._set_status(("✓ " if success else "✗ ") + (message or ""))
+            # scrcpy fixes its video size when it starts, so always restart.
+            self._start_screen_stream()
+
+        self._run_adb(_work, on_done=_done)
 
     def _on_always_on_top_changed(self, checked: bool):
         """Persist the always-on-top preference."""

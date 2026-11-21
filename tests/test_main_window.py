@@ -8,6 +8,7 @@ emulator is started: everything is checked against the widgets themselves.
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -327,6 +328,17 @@ class TestMainWindow(unittest.TestCase):
         self.assertTrue(win._scroll_active)
         win._end_scroll_gesture()
 
+    # -- preview geometry is normalised across platforms -------------------
+    def test_restored_geometry_is_refit_to_guest_aspect(self):
+        win = self.win.detached_window
+        target = win.guest_aspect()
+        win.resize(600, 300)  # far too wide for a phone screen
+        self.win._normalize_preview_geometry()
+        margin = win._margin
+        sw = win.width() - 2 * margin
+        sh = win.height() - 2 * margin - win._nav_height(sw)
+        self.assertAlmostEqual(sw / float(sh), target, delta=0.08)
+
     # -- logcat only runs while its tab is visible ------------------------
     def test_logcat_streams_only_while_visible(self):
         """Logcat must not consume CPU while the Controls tab is shown."""
@@ -335,6 +347,79 @@ class TestMainWindow(unittest.TestCase):
         self.assertFalse(self.win._logcat_visible())
         self.win.main_tabs.setCurrentIndex(0)  # Logcat
         self.assertTrue(self.win._logcat_visible())
+
+
+class TestPreviewReflow(unittest.TestCase):
+    """Stretching the preview rescales the Android guest, not the pixels."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        self.win = MainWindowV2()
+        self.win._current_package = ""
+        self.win._current_activity = ""
+
+    def tearDown(self):
+        try:
+            self.win._cleanup()
+        except Exception:
+            pass
+        self.win.deleteLater()
+
+    def _run(self):
+        win = self.win
+        with mock.patch.object(win, "_target_ready", return_value=True), \
+                mock.patch.object(win._adb, "get_screen_size",
+                                  return_value=(720, 1440)), \
+                mock.patch.object(win._adb, "set_screen_size",
+                                  return_value=(True, "ok")) as set_size, \
+                mock.patch.object(win, "_stop_screen_stream"), \
+                mock.patch.object(win, "_start_screen_stream") as start, \
+                mock.patch.object(win, "_run_adb",
+                                  side_effect=lambda fn, on_done=None:
+                                  on_done(*fn())):
+            win._apply_preview_reflow()
+        return set_size, start
+
+    def test_width_stretch_scales_guest_width_only(self):
+        self.win._pending_reflow = (400, 800, 600, 800)
+        set_size, start = self._run()
+        set_size.assert_called_once_with(1080, 1440)
+        start.assert_called_once()
+        self.assertFalse(self.win._reflowing)
+
+    def test_diagonal_stretch_scales_both_dimensions(self):
+        self.win._pending_reflow = (400, 800, 600, 1200)
+        set_size, _ = self._run()
+        set_size.assert_called_once_with(1080, 2160)
+
+    def test_no_change_does_not_restart_the_stream(self):
+        self.win._pending_reflow = (400, 800, 400, 800)
+        set_size, start = self._run()
+        set_size.assert_not_called()
+        start.assert_not_called()
+
+    def test_current_app_is_relaunched_after_resize(self):
+        self.win._current_package = "com.example.app"
+        self.win._pending_reflow = (400, 800, 600, 800)
+        with mock.patch.object(self.win, "_target_ready", return_value=True), \
+                mock.patch.object(self.win._adb, "get_screen_size",
+                                  return_value=(720, 1440)), \
+                mock.patch.object(self.win._adb, "set_screen_size",
+                                  return_value=(True, "ok")), \
+                mock.patch.object(self.win._adb, "force_stop") as stop, \
+                mock.patch.object(self.win._adb, "shell",
+                                  return_value=(True, "ok")) as shell, \
+                mock.patch.object(self.win, "_stop_screen_stream"), \
+                mock.patch.object(self.win, "_start_screen_stream"), \
+                mock.patch.object(self.win, "_run_adb",
+                                  side_effect=lambda fn, on_done=None:
+                                  on_done(*fn())):
+            self.win._apply_preview_reflow()
+        stop.assert_called_once_with("com.example.app")
+        shell.assert_called_once()
 
 
 if __name__ == "__main__":
