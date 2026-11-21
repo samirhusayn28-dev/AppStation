@@ -100,7 +100,7 @@ jobs:
           name: AppStation ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            artifacts/AppStation-windows/AppStation-Setup-1.0.1.exe
+            artifacts/AppStation-windows/AppStation-Setup-1.0.2.exe
             artifacts/AppStation-windows/AppStation-windows-portable.zip
             artifacts/AppStation-macos-intel/*.dmg
             artifacts/AppStation-macos-intel/*.pkg

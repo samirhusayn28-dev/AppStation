@@ -260,15 +260,15 @@ class PlatformUtils:
             except Exception:
                 pass
 
-            # Only an actual hypervisor/driver can accelerate the emulator.
-            result["supported"] = (result["hyper_v"] or result["whpx"]
-                                   or result["aehd_driver"])
+            # Only WHPX or the AEHD driver can accelerate the emulator.
+            # Hyper-V alone is not enough: the Android emulator talks to the
+            # user-mode Windows Hypervisor Platform (WHPX), so a machine with
+            # only Hyper-V enabled still cannot boot an x86 image.
+            result["supported"] = result["whpx"] or result["aehd_driver"]
             if result["whpx"]:
                 result["backend"] = "whpx"
             elif result["aehd_driver"]:
                 result["backend"] = "aehd"
-            elif result["hyper_v"]:
-                result["backend"] = "hyperv"
             else:
                 result["backend"] = "none"
 
@@ -298,6 +298,24 @@ class PlatformUtils:
         
         return result
     
+
+    @classmethod
+    def open_virtualization_settings(cls) -> Tuple[bool, str]:
+        """Open Windows Features where WHPX / Hyper-V can be enabled.
+
+        Opening the dialog needs no elevation; the user ticks the feature and
+        confirms with their own admin credentials.  A restart is still required
+        before the emulator can use it.
+        """
+        if not cls.IS_WINDOWS:
+            return False, "This option is only available on Windows"
+        try:
+            subprocess.Popen(["optionalfeatures.exe"], close_fds=True)
+            return True, (
+                "Opened Windows Features. Check 'Windows Hypervisor Platform' "
+                "(or 'Hyper-V'), click OK, then restart your computer.")
+        except Exception as e:
+            return False, f"Could not open Windows Features: {e}"
 
     @classmethod
     def get_hypervisor_guidance(cls) -> str:

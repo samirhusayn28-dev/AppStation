@@ -63,6 +63,12 @@ class TestWindowsVirtualizationDetection(unittest.TestCase):
         self.assertEqual(info["backend"], "none")
         self.assertIn("Windows Hypervisor Platform", info["message"])
 
+    def test_hyperv_alone_is_not_supported(self):
+        info = self._check(hyperv="Enabled")
+        self.assertTrue(info["hyper_v"])
+        self.assertFalse(info["supported"])
+        self.assertEqual(info["backend"], "none")
+
     def test_whpx_is_supported(self):
         info = self._check(whpx="Enabled")
         self.assertTrue(info["supported"])
@@ -113,6 +119,29 @@ class TestAccelStartCommand(unittest.TestCase):
         self.assertIn("-accel", cmd)
         self.assertEqual(cmd[cmd.index("-accel") + 1], "auto")
         self.assertNotIn("on", cmd)
+
+
+class TestWindowsStartGuidance(unittest.TestCase):
+    """No accelerator must fail fast with actionable instructions."""
+
+    def test_start_fails_fast_without_accelerator(self):
+        mgr = EmulatorManager()
+        accel = {"supported": False, "backend": "none",
+                 "details": {"message": "no hypervisor"}}
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True), \
+                mock.patch.object(PlatformUtils, "get_acceleration_info",
+                                  return_value=accel), \
+                mock.patch.object(EmulatorManager, "avd_name",
+                                  new_callable=mock.PropertyMock,
+                                  return_value="test"), \
+                mock.patch.object(mgr, "_start_once") as start_once:
+            ok, message = mgr.start(PerformanceMode.NORMAL)
+
+        self.assertFalse(ok)
+        self.assertIn("optionalfeatures", message)
+        self.assertIn("Windows Hypervisor Platform", message)
+        self.assertIn("no hypervisor", message)
+        start_once.assert_not_called()
 
 
 class TestBootErrorDiagnostics(unittest.TestCase):

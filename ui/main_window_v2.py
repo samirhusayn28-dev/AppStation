@@ -1684,6 +1684,20 @@ class MainWindowV2(QMainWindow):
         add_field(4, 0, "Setup", self.btn_rerun_setup)
         add_field(4, 2, "Battery", self.chk_low_power)
 
+        # Windows needs a real hypervisor for x86 Android images.  Expose the
+        # Windows Features dialog so the user can enable WHPX with one click.
+        self.lbl_virtualization = QLabel("Virtualization")
+        self.btn_fix_virtualization = QPushButton("Fix...")
+        self.btn_fix_virtualization.setToolTip(
+            "Open Windows Features to enable Windows Hypervisor Platform "
+            "(a restart is required)")
+        if not PlatformUtils.IS_WINDOWS:
+            self.lbl_virtualization.setVisible(False)
+            self.btn_fix_virtualization.setVisible(False)
+        settings_grid.addWidget(self.lbl_virtualization, 5, 0)
+        settings_grid.addWidget(self.btn_fix_virtualization, 5, 1,
+                                Qt.AlignmentFlag.AlignLeft)
+
         outer.addLayout(settings_grid)
         outer.addStretch(1)
 
@@ -1750,6 +1764,8 @@ class MainWindowV2(QMainWindow):
         # Android version chooser
         self.btn_android_version.clicked.connect(self._on_open_android_versions)
         self.btn_rerun_setup.clicked.connect(self._on_rerun_setup)
+        self.btn_fix_virtualization.clicked.connect(
+            self._on_fix_virtualization)
 
         # Performance mode + low-power (save immediately)
         self.chk_low_power.toggled.connect(self._on_low_power_changed)
@@ -2945,6 +2961,14 @@ class MainWindowV2(QMainWindow):
         if wizard.exec():
             self.refresh_after_setup()
             self._set_status("Setup completed")
+
+    @pyqtSlot()
+    def _on_fix_virtualization(self):
+        """Open Windows Features so WHPX/Hyper-V can be enabled."""
+        ok, message = PlatformUtils.open_virtualization_settings()
+        self._set_status(message)
+        if not ok:
+            QMessageBox.warning(self, "Virtualization", message)
 
     def refresh_after_setup(self):
         """Re-read the SDK/ADB paths and selected version after the wizard."""

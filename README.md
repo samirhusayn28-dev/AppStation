@@ -42,7 +42,7 @@ AppStation drops an APK onto a virtual Android phone running on the same compute
 
 **System requirements**
 
-- **Windows 10/11** — hardware virtualization enabled (`WHPX`, `Hyper-V`, or `AEHD`).
+- **Windows 10/11** — the **Windows Hypervisor Platform** feature (or the Android Emulator Hypervisor Driver) must be enabled. Firmware VT-x/SVM alone is not enough to boot the x86 Android image. Use **Controls → Virtualization → Fix...** to open Windows Features, tick "Windows Hypervisor Platform", then restart.
 - **macOS** — Intel or Apple Silicon (`Hypervisor.framework`).
 - **RAM** — 4 GB minimum, 8 GB recommended.
 - **Disk** — about 10 GB free for the SDK and system image.
@@ -60,8 +60,8 @@ Download the installer for your platform from the latest release:
 |----------|-------|
 | macOS Intel | `AppStation-macos-intel.dmg` |
 | macOS Apple Silicon | `AppStation-macos-arm64.dmg` |
-| macOS PKG | `AppStation-1.0.1.pkg` |
-| Windows | `AppStation-Setup-1.0.1.exe` |
+| macOS PKG | `AppStation-1.0.2.pkg` |
+| Windows | `AppStation-Setup-1.0.2.exe` |
 | Windows portable | `AppStation-windows-portable.zip` |
 
 On macOS, if Gatekeeper blocks the first launch, right-click the app and choose **Open**.
@@ -80,7 +80,7 @@ python -m pip install pyinstaller
 ```bash
 pyinstaller --clean --noconfirm AppStation.spec
 hdiutil create -volname "AppStation" \
-  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.1.dmg
+  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.2.dmg
 ```
 
 **Windows**

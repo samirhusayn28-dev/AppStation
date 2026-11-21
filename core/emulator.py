@@ -349,6 +349,25 @@ class EmulatorManager:
         if not self.avd_name:
             return False, "No Android version selected - choose one in Controls > Android version"
 
+        # x86/x86_64 Android images cannot boot without a hardware
+        # accelerator.  Fail fast with actionable instructions instead of
+        # launching an emulator that exits instantly with a cryptic log.
+        if PlatformUtils.IS_WINDOWS:
+            accel = PlatformUtils.get_acceleration_info()
+            if not accel.get("supported"):
+                detail = (accel.get("details") or {}).get("message", "")
+                guidance = (
+                    "Hardware acceleration is required to boot this Android "
+                    "image, but no emulator hypervisor is active on this PC.\n\n"
+                    "Fix: press Win+R, type 'optionalfeatures', check "
+                    "'Windows Hypervisor Platform' (or 'Hyper-V'), click OK, "
+                    "then restart your computer. Alternatively, install the "
+                    "Android Emulator Hypervisor Driver (AEHD)."
+                )
+                if detail:
+                    guidance += f"\n\nDetected: {detail}"
+                return False, guidance
+
         self._ensure_adb_server()
         self._serial = None
         force_window = (not scrcpy_available) or open_window
