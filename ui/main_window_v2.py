@@ -14,7 +14,7 @@ from typing import Optional, Callable, Tuple
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLayout, QLabel, QPushButton, QComboBox,
-                             QTabWidget, QFileDialog,
+                             QTabWidget, QFileDialog, QDialog,
                              QMessageBox, QGridLayout,
                              QSizePolicy, QSpinBox, QCheckBox, QToolButton,
                              QMenu, QApplication, QWidgetAction)
@@ -28,6 +28,7 @@ from .loading_screen import LoadingOverlay
 from .logcat_panel import LogcatPanel
 from .screen_view import ScreenView
 from .android_versions_dialog import AndroidVersionsDialog
+from .phone_setup_dialog import PhoneSetupDialog
 from core.platform_utils import PlatformUtils
 from core.sdk_manager import SDKManager, ANDROID_VERSION_NAMES
 from core.hardware_profile import HardwareProfiler, PerformanceMode
@@ -732,7 +733,7 @@ class APKInstallWorker(QThread):
     def __init__(self, apk_path: Path, emulator: EmulatorManager, adb: ADB,
                  scrcpy: ScrcpyManager, mode: PerformanceMode, scrcpy_available: bool = True,
                  no_window: bool = False, open_window: bool = False,
-                 start_mirror: bool = True):
+                 start_mirror: bool = True, phone_mode: bool = False):
         super().__init__()
         self._apk_path = apk_path
         self._emulator = emulator
@@ -743,6 +744,7 @@ class APKInstallWorker(QThread):
         self._no_window = no_window
         self._open_window = open_window
         self._start_mirror = start_mirror
+        self._phone_mode = phone_mode
         self._cancelled = False
 
     def cancel(self):
@@ -754,8 +756,9 @@ class APKInstallWorker(QThread):
 
     def run(self):
         try:
-            # Step 1: Start emulator if not running
-            if not self._emulator.is_running():
+            # Step 1: Start emulator only in emulator mode.  Phone mode already
+            # has a booted device and must never launch an emulator.
+            if not self._phone_mode and not self._emulator.is_running():
                 self.progress.emit("Starting emulator...")
                 self.log.emit("Starting emulator...")
                 success, msg = self._emulator.start(self._mode, wait_for_boot=True, timeout=120, scrcpy_available=self._scrcpy_available, no_window=self._no_window, open_window=self._open_window)
@@ -1022,6 +1025,12 @@ class MainWindowV2(QMainWindow):
         self._scrcpy = ScrcpyManager()
         self._sdk = SDKManager()
 
+        # Phone mode streams a real USB device and never starts the emulator.
+        self._phone_mode = settings.use_phone
+        if self._phone_mode and settings.phone_serial:
+            self._adb.serial = settings.phone_serial
+            self._scrcpy.set_serial(settings.phone_serial)
+
         # Embedded screen: the raw Android stream is shown unframed, filling
         # the left pane's preview area.  Frames are pulled from the stream's
         # latest-frame slot by _frame_timer (~30 Hz).
@@ -1048,7 +1057,7 @@ class MainWindowV2(QMainWindow):
             self._on_screen_size_changed)
         self.preview_pane = PreviewPane(self.screen_view)
         self.preview_pane.action.connect(self._on_device_action)
-        self.preview_pane.set_controls_enabled(self._emulator.is_running())
+        self.preview_pane.set_controls_enabled(self._target_ready())
 
         # Always detached: the preview lives in its own window.
         self._preview_detached = True
@@ -1120,6 +1129,7 @@ class MainWindowV2(QMainWindow):
         # sysctl, which must never block the GUI thread.
         self._start_profile_detection()
         self._load_controls_settings()
+        self._restore_phone_mode()
         self._update_emulator_buttons(self._emulator.is_running())
         self._update_app_buttons(False)
         # Apply the persisted display mode (native by default: Screen disabled).
@@ -1698,6 +1708,28 @@ class MainWindowV2(QMainWindow):
         settings_grid.addWidget(self.btn_fix_virtualization, 5, 1,
                                 Qt.AlignmentFlag.AlignLeft)
 
+        # Device target: emulator (default) or a real phone over USB.  Phone
+        # mode needs no hypervisor, so it works on PCs with VT-x disabled.
+        self.lbl_device_mode = QLabel("Device")
+        self.lbl_device_target = QLabel("Emulator")
+        self.btn_phone_connect = QPushButton("Connect phone...")
+        self.btn_phone_connect.setToolTip(
+            "Use an Android phone connected by USB - no emulator needed")
+        self.btn_use_emulator = QPushButton("Use emulator")
+        self.btn_use_emulator.setToolTip("Switch back to the local emulator")
+        self.btn_use_emulator.setVisible(self._phone_mode)
+        self._refresh_device_labels()
+        device_row = QWidget()
+        device_layout = QHBoxLayout(device_row)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(6)
+        device_layout.addWidget(self.lbl_device_target)
+        device_layout.addWidget(self.btn_phone_connect)
+        device_layout.addWidget(self.btn_use_emulator)
+        device_layout.addStretch(1)
+        settings_grid.addWidget(self.lbl_device_mode, 6, 0)
+        settings_grid.addWidget(device_row, 6, 1, 1, 3)
+
         outer.addLayout(settings_grid)
         outer.addStretch(1)
 
@@ -1766,6 +1798,8 @@ class MainWindowV2(QMainWindow):
         self.btn_rerun_setup.clicked.connect(self._on_rerun_setup)
         self.btn_fix_virtualization.clicked.connect(
             self._on_fix_virtualization)
+        self.btn_phone_connect.clicked.connect(self._on_connect_phone)
+        self.btn_use_emulator.clicked.connect(self._on_use_emulator)
 
         # Performance mode + low-power (save immediately)
         self.chk_low_power.toggled.connect(self._on_low_power_changed)
@@ -1956,13 +1990,60 @@ class MainWindowV2(QMainWindow):
             self._set_status("Nothing to cancel")
 
     def _update_emulator_buttons(self, running: bool):
-        self.btn_emu_start.setEnabled(not running)
-        self.btn_emu_stop.setEnabled(running)
-        self.btn_emu_restart.setEnabled(running)
+        self._sync_emulator_buttons(running)
+
+    def _sync_emulator_buttons(self, running: bool):
+        phone = self._phone_mode
+        self.btn_emu_start.setEnabled((not running) and not phone)
+        self.btn_emu_stop.setEnabled(running and not phone)
+        self.btn_emu_restart.setEnabled(running and not phone)
+        self.btn_emulator.setEnabled(not phone)
+        self.btn_emulator.setText(
+            "Stop Emulator" if running else "Start Emulator")
         # Snapshot buttons stay clickable so their handler can report
         # "Start the emulator first" in the status row.
-        self.btn_emulator.setText("Stop Emulator" if running else "Start Emulator")
-        self.preview_pane.set_controls_enabled(running)
+        self.preview_pane.set_controls_enabled(self._target_ready())
+
+    def _restore_phone_mode(self):
+        """Apply a persisted phone selection without probing devices at startup."""
+        if not self._phone_mode:
+            return
+        serial = settings.phone_serial
+        if serial:
+            self._adb.serial = serial
+            self._scrcpy.set_serial(serial)
+        self._refresh_device_labels()
+        self._set_status("Phone mode - connect your phone and open an APK")
+
+    def _target_ready(self) -> bool:
+        """True when the selected Android target (phone or emulator) is usable.
+
+        All input/stream handlers use this instead of asking the emulator
+        directly, so phone mode needs no running emulator at all.
+        """
+        if self._phone_mode:
+            return bool(self._adb.serial)
+        return self._emulator.is_running()
+
+    def _device_hint(self) -> str:
+        return ("Connect your phone first" if self._phone_mode
+                else "Start the emulator first")
+
+    def _refresh_device_labels(self):
+        """Keep the Controls device row in sync with the active target."""
+        if not hasattr(self, "lbl_device_target"):
+            return
+        if self._phone_mode:
+            serial = self._adb.serial
+            short = f"{serial[:12]}…" if len(serial) > 12 else serial
+            self.lbl_device_target.setText(
+                f"Phone: {short}" if serial else "Phone: not connected")
+            self.btn_phone_connect.setText("Change...")
+            self.btn_use_emulator.setVisible(True)
+        else:
+            self.lbl_device_target.setText("Emulator")
+            self.btn_phone_connect.setText("Connect phone...")
+            self.btn_use_emulator.setVisible(False)
 
     def _update_app_buttons(self, installed: bool):
         """Enable app buttons: install/reinstall/launch need a loaded APK;
@@ -2121,9 +2202,13 @@ class MainWindowV2(QMainWindow):
         if not self._current_apk or not self._current_apk.exists():
             self._set_status("Error: no APK loaded")
             return
-        if not settings.has_selected_version:
+        if not self._phone_mode and not settings.has_selected_version:
             self._set_status(
                 "Select an Android version first (Controls > Android version)")
+            return
+        if self._phone_mode and not self._adb.serial:
+            self._set_status(
+                "Connect your phone first (Controls > Device)")
             return
         if self._install_worker is not None and self._install_worker.isRunning():
             self._set_status("Install already in progress...")
@@ -2138,7 +2223,8 @@ class MainWindowV2(QMainWindow):
         self._install_worker = APKInstallWorker(
             self._current_apk, self._emulator, self._adb, self._scrcpy,
             self._mode, scrcpy_available=scrcpy_available,
-            no_window=not native, open_window=native, start_mirror=not native)
+            no_window=not native, open_window=native,
+            start_mirror=not native, phone_mode=self._phone_mode)
         self._install_worker.progress.connect(self._on_install_progress)
         self._install_worker.finished.connect(self._on_install_finished)
         self._install_worker.log.connect(self._on_install_log)
@@ -2176,7 +2262,8 @@ class MainWindowV2(QMainWindow):
             self._current_package = package
             if activity:
                 self._current_activity = activity
-            self._adb.serial = "emulator-5554"
+            if not self._phone_mode:
+                self._adb.serial = "emulator-5554"
             self._update_app_buttons(True)
             try:
                 if self._logcat_visible():
@@ -2277,8 +2364,8 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot()
     def _on_rotate_cycle(self):
         """Toolbar Rotate: cycle 0 -> 90 -> 180 -> 270."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
         self._rotation_index = (self._rotation_index + 1) % 4
         self._on_rotate(self._rotation_index)
@@ -2286,8 +2373,8 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot(int)
     def _on_rotate(self, rotation: int):
         """Set a rotation directly (0, 1, 2, 3 == 0, 90, 180, 270)."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
         self._rotation_index = rotation
         self._run_adb(
@@ -2298,8 +2385,8 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot()
     def _on_reset_screen(self):
         """Restore default size, density and rotation (wm resets + rotation 0)."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
 
         self._rotation_index = 0
@@ -2319,8 +2406,8 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot()
     def _on_screenshot(self):
         """Save a screenshot to ~/Pictures/AppStation (copied from old window)."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
 
         pictures_dir = Path.home() / "Pictures" / "AppStation"
@@ -2381,7 +2468,7 @@ class MainWindowV2(QMainWindow):
         becomes visible when the first frame arrives.  Before the emulator is
         started there is no floating bar of navigation buttons.
         """
-        self.preview_pane.set_controls_enabled(self._emulator.is_running())
+        self.preview_pane.set_controls_enabled(self._target_ready())
         self._preview_wanted = True
         if self.detached_window is None:
             try:
@@ -2398,8 +2485,8 @@ class MainWindowV2(QMainWindow):
 
     def _start_screen_stream(self):
         # Called by the embedded-mode auto-start once a device is ready.
-        if not self._emulator.is_running():
-            self._screen_status("Start the emulator first")
+        if not self._target_ready():
+            self._screen_status(self._device_hint())
             return
 
         # Show a loading message on the detached preview while scrcpy connects
@@ -2449,7 +2536,7 @@ class MainWindowV2(QMainWindow):
         The emulator is always started headless, so the live device is mirrored
         inside AppStation regardless of the saved display mode.
         """
-        if not self._emulator.is_running():
+        if not self._target_ready():
             return
         if self._screen.is_running():
             self._show_preview()
@@ -2469,8 +2556,8 @@ class MainWindowV2(QMainWindow):
             code = self._DEVICE_KEYCODES.get(action)
             if not code:
                 return
-            if not self._emulator.is_running():
-                self._set_status("Start the emulator first")
+            if not self._target_ready():
+                self._set_status(self._device_hint())
                 return
             label = action.replace("_", " ").title()
             self._set_status(f"Sending {action.replace('_', ' ')}...")
@@ -2520,8 +2607,8 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot(float, float)
     def _on_screen_touch(self, x: float, y: float):
         """Forward a tap on the preview screen to the Android device."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
         if not self._boot_completed():
             return
@@ -2539,9 +2626,9 @@ class MainWindowV2(QMainWindow):
 
     @pyqtSlot(float, float, float, float)
     def _on_screen_drag(self, x1: float, y1: float, x2: float, y2: float):
-        """Forward a swipe gesture to the emulator via adb input swipe."""
-        if not self._emulator.is_running():
-            self._set_status("Start the emulator first")
+        """Forward a swipe gesture to the device via adb input swipe."""
+        if not self._target_ready():
+            self._set_status(self._device_hint())
             return
         if not self._boot_completed():
             self._set_status("Android still booting - wait for boot to complete")
@@ -2568,7 +2655,7 @@ class MainWindowV2(QMainWindow):
         drag a virtual finger instead.  Deltas are queued and played back a few
         pixels per frame; no event is dropped and there is no synthetic fling.
         """
-        if not self._emulator.is_running() or not self._boot_completed():
+        if not self._target_ready() or not self._boot_completed():
             return
         w, h = self._screen_dimensions()
         x = max(6.0, min(float(w) - 7.0, float(x)))
@@ -2662,7 +2749,7 @@ class MainWindowV2(QMainWindow):
     @pyqtSlot()
     def _on_screen_drawer(self):
         """Open the Android app drawer with a bottom-to-top swipe."""
-        if not self._emulator.is_running():
+        if not self._target_ready():
             return
         if not self._boot_completed():
             return
@@ -2682,9 +2769,9 @@ class MainWindowV2(QMainWindow):
 
     @pyqtSlot(int)
     def _on_screen_key(self, key: int):
-        """Forward a key event to the emulator."""
+        """Forward a key event to the Android device."""
         try:
-            if not self._emulator.is_running():
+            if not self._target_ready():
                 return
             if not self._boot_completed():
                 return
@@ -2719,7 +2806,7 @@ class MainWindowV2(QMainWindow):
         """
         if self._device_ready:
             return True
-        if not self._emulator.is_running():
+        if not self._target_ready():
             self._device_ready = False
             return False
         now = time.monotonic()
@@ -2970,6 +3057,44 @@ class MainWindowV2(QMainWindow):
         if not ok:
             QMessageBox.warning(self, "Virtualization", message)
 
+    @pyqtSlot()
+    def _on_connect_phone(self):
+        """Guided USB connection: choose a phone, stream it, skip the emulator."""
+        dialog = PhoneSetupDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        serial = dialog.selected_serial()
+        if not serial:
+            return
+        self._adb.serial = serial
+        self._scrcpy.set_serial(serial)
+        self._phone_mode = True
+        settings.device_mode = "phone"
+        settings.phone_serial = serial
+        self._device_ready = False
+        self._boot_checked_at = 0.0
+        self._refresh_device_labels()
+        self._sync_emulator_buttons(self._emulator.is_running())
+        self._set_status("Phone connected - starting preview...")
+        self._start_screen_stream()
+
+    @pyqtSlot()
+    def _on_use_emulator(self):
+        """Switch back from phone mode to the local emulator."""
+        self._stop_screen_stream(quiet=True)
+        self._preview_wanted = False
+        if self.detached_window is not None:
+            self.detached_window.hide()
+        self._phone_mode = False
+        settings.device_mode = "emulator"
+        self._adb.serial = "emulator-5554"
+        self._scrcpy.set_serial("emulator-5554")
+        self._device_ready = False
+        self._boot_checked_at = 0.0
+        self._refresh_device_labels()
+        self._sync_emulator_buttons(self._emulator.is_running())
+        self._set_status("Switched to emulator mode")
+
     def refresh_after_setup(self):
         """Re-read the SDK/ADB paths and selected version after the wizard."""
         self._sdk = SDKManager()
@@ -3108,10 +3233,7 @@ class MainWindowV2(QMainWindow):
         running = self._emulator.is_running()
         self._update_emulator_buttons(running)
         # Hide loading feedback and re-enable buttons.
-        self.btn_emu_start.setEnabled(not running)
-        self.btn_emu_stop.setEnabled(running)
-        self.btn_emu_restart.setEnabled(running)
-        self.btn_emulator.setEnabled(True)
+        self._sync_emulator_buttons(running)
         self.btn_cancel.setVisible(False)
         if hasattr(self, "lbl_emu_loading"):
             self.lbl_emu_loading.setVisible(False)

@@ -65,21 +65,35 @@ class ADB:
         
         return False, "Device wait timeout"
     
+    def list_devices(self) -> List[Dict[str, str]]:
+        """List every ADB device, without selecting a serial first.
+
+        ``adb devices`` ignores ``-s``, but running it through ``_run`` would
+        still prepend the saved serial.  Phone discovery must query the raw
+        daemon so a phone can be found when no emulator is running.
+        """
+        cmd = [str(self._adb_path), "devices", "-l"]
+        result = PlatformUtils.run_command(cmd, timeout=15)
+        devices: List[Dict[str, str]] = []
+        if result.returncode != 0:
+            return devices
+        for line in (result.stdout or "").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            info = {"serial": parts[0], "state": parts[1],
+                    "model": "", "device": ""}
+            for field in parts[2:]:
+                if ":" in field:
+                    key, _, value = field.partition(":")
+                    if key in info:
+                        info[key] = value
+            devices.append(info)
+        return devices
+
     def get_devices(self) -> List[Dict[str, str]]:
         """Get list of connected devices."""
-        result = self._run(["devices", "-l"])
-        devices = []
-        if result.returncode == 0:
-            for line in result.stdout.strip().split("\n")[1:]:  # Skip header
-                parts = line.split()
-                if len(parts) >= 2:
-                    devices.append({
-                        "serial": parts[0],
-                        "state": parts[1],
-                        "model": "",
-                        "device": "",
-                    })
-        return devices
+        return self.list_devices()
     
     def install(self, apk_path: Path, reinstall: bool = True, 
                 grant_permissions: bool = True) -> Tuple[bool, str]:

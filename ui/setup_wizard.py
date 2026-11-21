@@ -24,8 +24,9 @@ from PyQt6.QtCore import QThread, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                              QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                             QProgressBar, QPushButton, QRadioButton, QTextEdit,
-                             QVBoxLayout, QWidget, QWizard, QWizardPage)
+                             QDialog, QProgressBar, QPushButton, QRadioButton,
+                             QTextEdit, QVBoxLayout, QWidget, QWizard,
+                             QWizardPage)
 
 from core.bootstrap import (BASE_COMPONENTS, COMPONENT_LABELS,
                             COMPONENT_SIZES_MB, BootstrapManager,
@@ -35,6 +36,10 @@ from core.hardware_profile import (EmulatorConfig, PerformanceMode,
 from core.platform_utils import PlatformUtils
 from core.sdk_manager import ANDROID_VERSION_NAMES, AndroidVersion, SDKManager
 from core.settings import settings
+from .phone_setup_dialog import PhoneSetupDialog
+
+
+PAGE_FINISH = 7
 
 
 # API levels offered when sdkmanager is not installed yet.  The version page
@@ -130,14 +135,16 @@ class WelcomePage(QWizardPage):
     def __init__(self):
         super().__init__()
         self.setTitle("Welcome to AppStation")
-        self.setSubTitle("Set up a local Android emulator. No Android Studio, "
-                         "no phone, no account.")
+        self.setSubTitle("Set up a local Android emulator, or use your own "
+                         "phone over USB. No Android Studio, no account.")
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
         intro = QLabel(
-            "This wizard checks your computer, installs the Android tools "
-            "AppStation needs, and creates one emulator device.")
+            "This wizard checks your computer and installs the Android tools "
+            "AppStation needs. On the next page you can choose the built-in "
+            "emulator or your own Android phone - no BIOS settings needed "
+            "with a phone.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -175,12 +182,16 @@ class InstallTypePage(QWizardPage):
         self.radio_standard = QRadioButton(
             "Standard (recommended) — install/repair all required components")
         self.radio_custom = QRadioButton("Custom — choose components")
+        self.radio_phone = QRadioButton(
+            "Use my Android phone (USB) — no emulator, no BIOS settings")
         group = QButtonGroup(self)
         group.addButton(self.radio_standard)
         group.addButton(self.radio_custom)
+        group.addButton(self.radio_phone)
         self.radio_standard.setChecked(True)
         layout.addWidget(self.radio_standard)
         layout.addWidget(self.radio_custom)
+        layout.addWidget(self.radio_phone)
 
         self.checkboxes = {}
         for key in BASE_COMPONENTS:
@@ -193,11 +204,13 @@ class InstallTypePage(QWizardPage):
 
         self.radio_standard.toggled.connect(self._sync_mode)
         self.radio_custom.toggled.connect(self._sync_mode)
+        self.radio_phone.toggled.connect(self._sync_mode)
         self._jdk_required = False
         layout.addStretch(1)
 
     def _sync_mode(self, _checked=False):
-        custom = self.radio_custom.isChecked()
+        phone = self.radio_phone.isChecked()
+        custom = self.radio_custom.isChecked() and not phone
         for key, box in self.checkboxes.items():
             if key == "jdk" and self._jdk_required:
                 box.setChecked(True)
@@ -208,7 +221,9 @@ class InstallTypePage(QWizardPage):
     def initializePage(self):
         state = self.wizard().state
         self._jdk_required = not self.wizard().bootstrap.check_jdk().found
-        if state.install_type == "custom":
+        if state.install_type == "phone":
+            self.radio_phone.setChecked(True)
+        elif state.install_type == "custom":
             self.radio_custom.setChecked(True)
         else:
             self.radio_standard.setChecked(True)
@@ -224,12 +239,22 @@ class InstallTypePage(QWizardPage):
         return selected
 
     def validatePage(self):
+        wizard = self.wizard()
+        if self.radio_phone.isChecked():
+            # A phone only needs adb (platform-tools) - no JDK, no emulator,
+            # no system image and no AVD.
+            wizard.use_phone = True
+            wizard.components = ["platform-tools"]
+            wizard.state.install_type = "phone"
+            wizard.state.save()
+            return True
+
         selected = self.components()
         if not selected:
             QMessageBox.warning(self, "Choose components",
                                 "Select at least one component to install.")
             return False
-        wizard = self.wizard()
+        wizard.use_phone = False
         wizard.components = selected
         wizard.state.install_type = ("custom" if self.radio_custom.isChecked()
                                      else "standard")
@@ -340,6 +365,12 @@ class SystemCheckPage(QWizardPage):
             f"Java: {report['jdk'].message}",
         ]
         self.details.setPlainText("\n".join(lines))
+        if getattr(self.wizard(), "use_phone", False):
+            self.warning.setText(
+                "Phone mode does not use the emulator, so virtualization and "
+                "RAM/disk warnings above do not apply. Only adb is installed.")
+            self.warning.setStyleSheet("color: #4ec9b0;")
+            return
         if report["warnings"]:
             self.warning.setText("Warnings:\n• " +
                                  "\n• ".join(report["warnings"]))
@@ -465,6 +496,13 @@ class DownloadPage(QWizardPage):
         manager = self.wizard().bootstrap
         return all(manager.is_component_installed(key)
                    for key in self.wizard().components)
+
+    def nextId(self):
+        # Phone mode has no Android version to pick - go straight to the
+        # connection step instead of offering a system image download.
+        if getattr(self.wizard(), "use_phone", False):
+            return PAGE_FINISH
+        return super().nextId()
 
     def start_downloads(self):
         if self._worker is not None and self._worker.isRunning():
@@ -665,10 +703,9 @@ class VersionPage(QWizardPage):
 class FinishPage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Create the emulator")
-        self.setSubTitle("AppStation downloads the selected image if needed, "
-                         "creates its AVD, then finishes. The emulator is not "
-                         "started.")
+        # A default title keeps the page meaningful before initializePage()
+        # chooses the emulator or phone variant.
+        self.setTitle("Create the emulator or connect your phone")
         self._worker = None
         self._complete = False
 
@@ -685,9 +722,52 @@ class FinishPage(QWizardPage):
         self.btn_create = QPushButton("Create AVD and finish")
         self.btn_create.clicked.connect(self.create_avd)
         layout.addWidget(self.btn_create)
+        self.btn_phone = QPushButton("Connect my phone")
+        self.btn_phone.clicked.connect(self.connect_phone)
+        layout.addWidget(self.btn_phone)
+
+    @property
+    def _phone(self) -> bool:
+        return bool(getattr(self.wizard(), "use_phone", False))
 
     def initializePage(self):
         state = self.wizard().state
+        self.progress.setRange(0, 100)
+        self.status.setStyleSheet("")
+        if self._phone:
+            self.setTitle("Connect your phone")
+            self.setSubTitle(
+                "Your phone runs the apps - no emulator, no system image and "
+                "no BIOS settings. USB debugging is the only one-time step.")
+            self.summary.setPlainText(
+                "1. Connect your Android phone with a USB cable.\n"
+                "2. On the phone open Settings → About phone and tap "
+                "'Build number' 7 times.\n"
+                "3. In Settings → Developer options switch on "
+                "'USB debugging'.\n"
+                "4. If the phone asks 'Allow USB debugging?', tap Allow.\n"
+                "5. Click 'Connect my phone' and choose your phone.\n\n"
+                f"ADB folder: {self.wizard().bootstrap.sdk_dir}\n"
+                f"Components: {', '.join(self.wizard().components)}")
+            self.progress.setValue(100)
+            self.btn_create.setVisible(False)
+            self.btn_phone.setVisible(True)
+            self.btn_phone.setEnabled(True)
+            connected = state.completed and settings.use_phone
+            self.status.setText(
+                "Phone mode is already set up. You can reconnect a different "
+                "phone any time." if connected
+                else "Ready to connect your phone.")
+            self._complete = bool(connected)
+            self.completeChanged.emit()
+            return
+
+        self.setTitle("Create the emulator")
+        self.setSubTitle("AppStation downloads the selected image if needed, "
+                         "creates its AVD, then finishes. The emulator is not "
+                         "started.")
+        self.btn_create.setVisible(True)
+        self.btn_phone.setVisible(False)
         name = ANDROID_VERSION_NAMES.get(state.api_level,
                                          f"Android {state.api_level}")
         lines = [
@@ -706,6 +786,26 @@ class FinishPage(QWizardPage):
 
     def isComplete(self):
         return self._complete
+
+    def connect_phone(self):
+        dialog = PhoneSetupDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        serial = dialog.selected_serial()
+        if not serial:
+            return
+        settings.sdk_path = self.wizard().bootstrap.sdk_dir
+        settings.device_mode = "phone"
+        settings.phone_serial = serial
+        settings.first_run_completed = True
+        self.wizard().state.completed = True
+        self.wizard().state.save()
+        self._complete = True
+        self.progress.setValue(100)
+        self.status.setStyleSheet("color: #4ec9b0;")
+        self.status.setText(f"Phone {serial} is ready. Click Finish.")
+        self.btn_phone.setEnabled(False)
+        self.completeChanged.emit()
 
     def create_avd(self):
         if self._worker is not None and self._worker.isRunning():
@@ -771,13 +871,18 @@ class SetupWizard(QWizard):
         self.setWindowTitle("AppStation Setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.resize(780, 640)
-        self.components = list(BASE_COMPONENTS)
 
         self.bootstrap = BootstrapManager()
         if force:
             self.bootstrap.state.reset()
             self.bootstrap.state = SetupState.load()
         self.state = self.bootstrap.state
+        # Resuming a saved wizard (or reopening after setup) must keep the
+        # phone choice, so derive it from persisted state rather than waiting
+        # for the install-type page to be visited again.
+        self.use_phone = self.state.install_type == "phone"
+        self.components = (["platform-tools"] if self.use_phone
+                           else list(BASE_COMPONENTS))
 
         self.addPage(WelcomePage())
         self.addPage(InstallTypePage())

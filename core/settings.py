@@ -41,6 +41,10 @@ class Settings:
         "selected_api_level": 0,
         "selected_variant": "",
         "selected_avd_name": "",
+        # Where Android runs: "emulator" (default) or "phone" (USB device).
+        # Phone mode needs no hypervisor, system image or AVD.
+        "device_mode": "emulator",
+        "phone_serial": "",
     }
     
     def __init__(self):
@@ -264,6 +268,28 @@ class Settings:
         self._data["selected_variant"] = variant or ""
         self._data["selected_avd_name"] = avd_name or ""
         self.save()
+
+    @property
+    def device_mode(self) -> str:
+        """``"emulator"`` or ``"phone"``."""
+        value = self._data.get("device_mode", "emulator")
+        return value if value in ("emulator", "phone") else "emulator"
+
+    @device_mode.setter
+    def device_mode(self, value: str):
+        self.set("device_mode", "phone" if value == "phone" else "emulator")
+
+    @property
+    def phone_serial(self) -> str:
+        return self._data.get("phone_serial", "") or ""
+
+    @phone_serial.setter
+    def phone_serial(self, value: str):
+        self.set("phone_serial", value or "")
+
+    @property
+    def use_phone(self) -> bool:
+        return self.device_mode == "phone"
 
     @property
     def first_run_completed(self) -> bool:
