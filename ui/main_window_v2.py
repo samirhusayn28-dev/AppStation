@@ -2004,16 +2004,32 @@ class MainWindowV2(QMainWindow):
         # "Start the emulator first" in the status row.
         self.preview_pane.set_controls_enabled(self._target_ready())
 
+    def _apply_device_mode(self, announce: bool = False):
+        """Re-read the persisted target and re-enable the right controls.
+
+        The setup wizard can change ``device_mode`` while this window is
+        already alive, so this must not rely on the value cached in __init__.
+        """
+        self._phone_mode = settings.use_phone
+        serial = (settings.phone_serial if self._phone_mode
+                  else "emulator-5554")
+        self._adb.serial = serial
+        self._scrcpy.set_serial(serial)
+        # refresh_after_setup() builds a fresh ADB; keep the stream in sync.
+        self._screen._adb = self._adb
+        self._device_ready = False
+        self._boot_checked_at = 0.0
+        self._refresh_device_labels()
+        self._sync_emulator_buttons(self._emulator.is_running())
+        if announce:
+            self._set_status(
+                "Phone mode - connect your phone and open an APK"
+                if self._phone_mode else
+                "Emulator mode - start the emulator to open an APK")
+
     def _restore_phone_mode(self):
         """Apply a persisted phone selection without probing devices at startup."""
-        if not self._phone_mode:
-            return
-        serial = settings.phone_serial
-        if serial:
-            self._adb.serial = serial
-            self._scrcpy.set_serial(serial)
-        self._refresh_device_labels()
-        self._set_status("Phone mode - connect your phone and open an APK")
+        self._apply_device_mode(announce=self._phone_mode)
 
     def _target_ready(self) -> bool:
         """True when the selected Android target (phone or emulator) is usable.
@@ -3085,23 +3101,16 @@ class MainWindowV2(QMainWindow):
         self._preview_wanted = False
         if self.detached_window is not None:
             self.detached_window.hide()
-        self._phone_mode = False
         settings.device_mode = "emulator"
-        self._adb.serial = "emulator-5554"
-        self._scrcpy.set_serial("emulator-5554")
-        self._device_ready = False
-        self._boot_checked_at = 0.0
-        self._refresh_device_labels()
-        self._sync_emulator_buttons(self._emulator.is_running())
-        self._set_status("Switched to emulator mode")
+        self._apply_device_mode(announce=True)
 
     def refresh_after_setup(self):
         """Re-read the SDK/ADB paths and selected version after the wizard."""
         self._sdk = SDKManager()
         self._adb = ADB()
+        self._apply_device_mode(announce=True)
         self._migrate_legacy_android_version()
         self._refresh_selected_android_label()
-        self._update_emulator_buttons(self._emulator.is_running())
 
     @pyqtSlot(int, str)
     def _on_android_version_selected(self, api_level: int, variant: str):

@@ -880,7 +880,9 @@ class SetupWizard(QWizard):
         # Resuming a saved wizard (or reopening after setup) must keep the
         # phone choice, so derive it from persisted state rather than waiting
         # for the install-type page to be visited again.
-        self.use_phone = self.state.install_type == "phone"
+        self.use_phone = (settings.use_phone
+                          or (self.state.install_type == "phone"
+                              and not settings.first_run_completed))
         self.components = (["platform-tools"] if self.use_phone
                            else list(BASE_COMPONENTS))
 
@@ -947,6 +949,15 @@ class SetupWizard(QWizard):
     def _on_finished(self, result: int):
         if result == QWizard.DialogCode.Accepted:
             settings.first_run_completed = True
+            # Finishing the wizard on the emulator path must undo a phone
+            # choice from an earlier run; otherwise the app reopens stuck in
+            # mirroring mode with all emulator buttons disabled.
+            settings.device_mode = ("phone" if self.use_phone
+                                    else "emulator")
+            if self.use_phone:
+                self.state.install_type = "phone"
+            elif self.state.install_type == "phone":
+                self.state.install_type = "standard"
             self.state.completed = True
             self.state.save()
 

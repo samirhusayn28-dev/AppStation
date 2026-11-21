@@ -349,25 +349,11 @@ class EmulatorManager:
         if not self.avd_name:
             return False, "No Android version selected - choose one in Controls > Android version"
 
-        # x86/x86_64 Android images cannot boot without a hardware
-        # accelerator.  Fail fast with actionable instructions instead of
-        # launching an emulator that exits instantly with a cryptic log.
-        if PlatformUtils.IS_WINDOWS:
-            accel = PlatformUtils.get_acceleration_info()
-            if not accel.get("supported"):
-                detail = (accel.get("details") or {}).get("message", "")
-                guidance = (
-                    "Hardware acceleration is required to boot this Android "
-                    "image, but no emulator hypervisor is active on this PC.\n\n"
-                    "Fix: press Win+R, type 'optionalfeatures', check "
-                    "'Windows Hypervisor Platform' (or 'Hyper-V'), click OK, "
-                    "then restart your computer. Alternatively, install the "
-                    "Android Emulator Hypervisor Driver (AEHD)."
-                )
-                if detail:
-                    guidance += f"\n\nDetected: {detail}"
-                return False, guidance
-
+        # On macOS the emulator is authoritative: we pass ``-accel auto`` and
+        # let it pick HVF.  Do the same on Windows.  The old pre-launch gate
+        # blocked even correctly configured machines because detecting WHPX
+        # used an elevated PowerShell cmdlet while the installed app runs
+        # non-elevated.  Guidance is now attached only if the launch fails.
         self._ensure_adb_server()
         self._serial = None
         force_window = (not scrcpy_available) or open_window
@@ -420,7 +406,32 @@ class EmulatorManager:
         elif ok and wait_for_boot and settings.quickboot:
             self._log("Quickboot snapshot already present - not rewritten")
 
+        if not ok and PlatformUtils.IS_WINDOWS:
+            guidance = self._windows_acceleration_guidance()
+            if guidance and guidance not in message:
+                message = f"{message}\n\n{guidance}"
         return ok, message
+
+    def _windows_acceleration_guidance(self) -> str:
+        """Actionable WHPX/AEHD advice when a Windows boot actually failed."""
+        try:
+            accel = PlatformUtils.get_acceleration_info()
+        except Exception:
+            return ""
+        if accel.get("supported"):
+            return ""
+        detail = (accel.get("details") or {}).get("message", "")
+        guidance = (
+            "Hardware acceleration is required to boot this Android image, "
+            "but no emulator hypervisor was detected on this PC.\n\n"
+            "Fix: press Win+R, type 'optionalfeatures', check "
+            "'Windows Hypervisor Platform' (or 'Hyper-V'), click OK, then "
+            "restart your computer. Alternatively, install the Android "
+            "Emulator Hypervisor Driver (AEHD)."
+        )
+        if detail:
+            guidance += f"\n\nDetected: {detail}"
+        return guidance
 
     def _gpu_override_needed(self, mode: PerformanceMode,
                               no_window: bool = False) -> bool:

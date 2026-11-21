@@ -735,7 +735,13 @@ def needs_setup() -> bool:
     if not settings.first_run_completed:
         return True
     try:
-        return not BootstrapManager().all_required_installed()
+        manager = BootstrapManager()
+        # Phone mode deliberately installs only adb.  Requiring the emulator,
+        # JDK and system-image tools here made the wizard reopen on every
+        # launch and kept the emulator controls disabled.
+        if settings.use_phone:
+            return not manager.is_component_installed("platform-tools")
+        return not manager.all_required_installed()
     except Exception:
         return True
 

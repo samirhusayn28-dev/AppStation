@@ -173,9 +173,9 @@ class TestAccelStartCommand(unittest.TestCase):
 
 
 class TestWindowsStartGuidance(unittest.TestCase):
-    """No accelerator must fail fast with actionable instructions."""
+    """Windows lets -accel auto decide, adding advice only if boot fails."""
 
-    def test_start_fails_fast_without_accelerator(self):
+    def test_start_attempts_boot_and_adds_guidance_on_failure(self):
         mgr = EmulatorManager()
         accel = {"supported": False, "backend": "none",
                  "details": {"message": "no hypervisor"}}
@@ -185,14 +185,30 @@ class TestWindowsStartGuidance(unittest.TestCase):
                 mock.patch.object(EmulatorManager, "avd_name",
                                   new_callable=mock.PropertyMock,
                                   return_value="test"), \
-                mock.patch.object(mgr, "_start_once") as start_once:
+                mock.patch.object(mgr, "_ensure_adb_server"), \
+                mock.patch.object(mgr, "has_snapshot", return_value=False), \
+                mock.patch.object(mgr, "build_start_command",
+                                  return_value=["emulator"]), \
+                mock.patch.object(mgr, "_gpu_override_needed",
+                                  return_value=False), \
+                mock.patch.object(mgr, "_start_once",
+                                  return_value=(False, "died during boot")) \
+                as start_once:
             ok, message = mgr.start(PerformanceMode.NORMAL)
 
         self.assertFalse(ok)
+        start_once.assert_called_once()
         self.assertIn("optionalfeatures", message)
         self.assertIn("Windows Hypervisor Platform", message)
         self.assertIn("no hypervisor", message)
-        start_once.assert_not_called()
+
+    def test_supported_accelerator_does_not_add_guidance(self):
+        mgr = EmulatorManager()
+        accel = {"supported": True, "backend": "whpx", "details": {}}
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True), \
+                mock.patch.object(PlatformUtils, "get_acceleration_info",
+                                  return_value=accel):
+            self.assertEqual(mgr._windows_acceleration_guidance(), "")
 
 
 class TestBootErrorDiagnostics(unittest.TestCase):

@@ -10,6 +10,7 @@ No emulator is started.
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -17,6 +18,7 @@ from PyQt6.QtCore import QPointF, Qt  # noqa: E402
 from PyQt6.QtGui import QImage  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
+from core.platform_utils import PlatformUtils  # noqa: E402
 from ui.screen_view import ScreenView  # noqa: E402
 
 
@@ -292,6 +294,33 @@ class TestScreenViewInputSignals(unittest.TestCase):
         for _ in range(4):
             self.view.wheelEvent(self._wheel_event(
                 40, pdy=20, phase=Qt.ScrollPhase.ScrollUpdate))
+        self.assertEqual(self.drawers, [])
+
+    def test_windows_upward_burst_opens_drawer(self):
+        """Windows wheel events have no phase/pixel delta and never set
+        inverted(); they must still follow the fingers like macOS."""
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
+            for _ in range(4):
+                self.view.wheelEvent(self._wheel_event(
+                    -40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                    inverted=False))
+        self.assertEqual(len(self.drawers), 1)
+        self.assertEqual(self.scrolls[0][3], -40)
+
+    def test_windows_downward_scroll_does_not_open_drawer(self):
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
+            for _ in range(4):
+                self.view.wheelEvent(self._wheel_event(
+                    40, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                    inverted=False))
+        self.assertEqual(self.drawers, [])
+
+    def test_windows_mouse_wheel_notch_is_not_a_trackpad_burst(self):
+        with mock.patch.object(PlatformUtils, "IS_WINDOWS", True):
+            for _ in range(4):
+                self.view.wheelEvent(self._wheel_event(
+                    -120, pdy=0, phase=Qt.ScrollPhase.NoScrollPhase,
+                    inverted=False))
         self.assertEqual(self.drawers, [])
 
     def test_momentum_after_a_swipe_does_not_reopen_the_drawer(self):

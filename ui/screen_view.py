@@ -27,6 +27,8 @@ from PyQt6.QtCore import (QPointF, QRect, QRectF, QSize, QTimer, Qt,
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
+from core.platform_utils import PlatformUtils
+
 
 class ScreenView(QWidget):
     """Shows the Android screen, scaled to fit the widget."""
@@ -407,28 +409,32 @@ class ScreenView(QWidget):
 
         angle = event.angleDelta()
         pixel = event.pixelDelta()
-        dx, dy = angle.x(), angle.y()
+        phase = event.phase()
+
+        # Qt reports which way the device is inverted on macOS.  Windows never
+        # sets that flag, and its precision trackpads already report natural
+        # deltas (fingers-up is negative), so flipping there is what made every
+        # Windows gesture behave backwards.  Normalise to *finger movement*:
+        # negative dy always means the fingers moved up, on either OS.
+        invert = (not event.inverted()) and not PlatformUtils.IS_WINDOWS
+        sign = -1 if invert else 1
+        dx, dy = angle.x() * sign, angle.y() * sign
 
         # Two-finger trackpad swipe up == Android "open app drawer".  A slow
         # swipe arrives as many small wheel events, so accumulate them over a
         # short window; the cooldown keeps one gesture from firing repeatedly.
-        # Trackpads report precise pixel deltas (and scroll phases); a plain
-        # mouse wheel reports only angle deltas, so it stays a normal scroll.
-        # Momentum events arrive *after* the fingers are lifted; they keep the
-        # content scrolling but must not re-trigger the drawer (which would
-        # immediately close the drawer the same swipe just opened).
-        phase = event.phase()
+        # macOS trackpads report pixel deltas and scroll phases.  Windows
+        # reports neither, so recognise its sub-notch high-resolution wheel
+        # deltas as a trackpad; a real mouse wheel sends exactly 120 per notch
+        # and must stay a normal scroll.
         trackpad = (not pixel.isNull()
-                    or phase != Qt.ScrollPhase.NoScrollPhase)
+                    or phase != Qt.ScrollPhase.NoScrollPhase
+                    or (PlatformUtils.IS_WINDOWS
+                        and 0 < abs(angle.y()) < 120))
         if trackpad and phase != Qt.ScrollPhase.ScrollMomentum:
             # Normalise both delta kinds to roughly one unit per "pixel".
-            step = pixel.y() if not pixel.isNull() else angle.y() * 0.33
-            # Follow the *fingers*, not the scroll direction: with macOS
-            # natural scrolling (the default) fingers-up is a negative delta,
-            # with it disabled the sign is reversed.  Qt reports which way the
-            # device is inverted on the event itself.
-            if not event.inverted():
-                step = -step
+            step = (pixel.y() if not pixel.isNull()
+                    else angle.y() * 0.33) * sign
             if step < 0:
                 self._wheel_accum += step
                 self._wheel_reset_timer.start(350)

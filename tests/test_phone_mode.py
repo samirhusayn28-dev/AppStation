@@ -70,6 +70,17 @@ class TestDeviceModeSettings(unittest.TestCase):
             self.assertFalse(reloaded.use_phone)
 
 
+class TestDeviceModeResync(unittest.TestCase):
+    def test_phone_mode_only_needs_adb(self):
+        from core.bootstrap import needs_setup
+
+        fake = SimpleNamespace(first_run_completed=True, use_phone=True)
+        with mock.patch("core.settings.settings", fake), \
+                mock.patch("core.bootstrap.BootstrapManager.is_component_installed",
+                           return_value=True):
+            self.assertFalse(needs_setup())
+
+
 class TestPhoneInstallWorker(unittest.TestCase):
     """Installing an APK in phone mode must never touch the emulator."""
 
@@ -152,6 +163,39 @@ class TestPhoneWizard(unittest.TestCase):
         dialog._use_selected()
         self.assertEqual(dialog.selected_serial(), "DEF456")
         dialog.close()
+
+    def test_finishing_emulator_wizard_clears_phone_mode(self):
+        from PyQt6.QtWidgets import QWizard
+
+        with mock.patch.object(settings, "_data", dict(settings._data)), \
+                mock.patch.object(type(settings), "save", return_value=True):
+            settings.device_mode = "phone"
+            wizard = self._wizard()
+            wizard.use_phone = False
+            wizard._on_finished(QWizard.DialogCode.Accepted)
+            self.assertEqual(settings.device_mode, "emulator")
+            wizard.close()
+
+    def test_refresh_after_setup_restores_emulator_controls(self):
+        from ui.main_window_v2 import MainWindowV2
+
+        with mock.patch.object(settings, "_data", dict(settings._data)), \
+                mock.patch.object(type(settings), "save", return_value=True):
+            settings.device_mode = "phone"
+            settings.phone_serial = "ABC123"
+            win = MainWindowV2()
+            self.assertTrue(win._phone_mode)
+            self.assertFalse(win.btn_emu_start.isEnabled())
+
+            # The wizard finished on the emulator path while this window was
+            # already open.
+            settings.device_mode = "emulator"
+            win.refresh_after_setup()
+            self.assertFalse(win._phone_mode)
+            self.assertTrue(win.btn_emu_start.isEnabled())
+            self.assertEqual(win._adb.serial, "emulator-5554")
+            self.assertEqual(win._screen._adb, win._adb)
+            win._cleanup()
 
     def test_finish_page_connects_phone_and_persists(self):
         from ui.setup_wizard import PhoneSetupDialog
