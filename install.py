@@ -10,8 +10,8 @@ import sys
 # Paths
 APP_BUNDLE = os.path.join(os.getcwd(), "dist", "AppStation.app")
 PKG_ID = "com.appstation.app"
-PKG_VERSION = "1.0.6"
-OUTPUT_PKG = "AppStation-1.0.6.pkg"
+PKG_VERSION = "1.0.7"
+OUTPUT_PKG = "AppStation-1.0.7.pkg"
 
 def create_pkg():
     """Create a macOS package installer for AppStation."""

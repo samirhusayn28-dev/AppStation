@@ -136,52 +136,51 @@ class TestManualResizeGeometry(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
 
-    def test_right_edge_grows_width_only(self):
+    def _assert_aspect_locked(self, geom, aspect=0.5):
+        margin = 10
+        screen_w = geom.width() - 2 * margin
+        nav_h = max(36, min(56, round(0.09 * screen_w)))
+        screen_h = geom.height() - nav_h - 2 * margin
+        self.assertAlmostEqual(screen_w / screen_h, aspect, delta=0.02)
+
+    def test_right_edge_scales_with_aspect_locked(self):
         start = QRect(100, 100, 400, 800)
         geom = DetachedPreviewWindow._manual_geometry(
-            "resize-right", 80, 0, start, 400 / 800, QSize(220, 300),
-            aspect_lock=False)
+            "resize-right", 80, 0, start, 0.5, QSize(220, 300))
         self.assertEqual(geom.left(), 100)
         self.assertEqual(geom.top(), 100)
-        self.assertEqual(geom.width(), start.width() + 80)
-        self.assertEqual(geom.height(), start.height())
+        self.assertGreater(geom.width(), start.width())
+        self._assert_aspect_locked(geom)
 
     def test_left_edge_keeps_right_edge_anchored(self):
         start = QRect(100, 100, 400, 800)
         geom = DetachedPreviewWindow._manual_geometry(
-            "resize-left", -80, 0, start, 0.5, QSize(220, 300),
-            aspect_lock=False)
+            "resize-left", -80, 0, start, 0.5, QSize(220, 300))
         self.assertEqual(geom.right(), start.right())
-        self.assertEqual(geom.width(), start.width() + 80)
-        self.assertEqual(geom.height(), start.height())
+        self.assertGreater(geom.width(), start.width())
+        self._assert_aspect_locked(geom)
 
     def test_bottom_edge_keeps_top_anchored(self):
         start = QRect(100, 100, 400, 800)
         geom = DetachedPreviewWindow._manual_geometry(
-            "resize-bottom", 0, 100, start, 0.5, QSize(220, 300),
-            aspect_lock=False)
+            "resize-bottom", 0, 100, start, 0.5, QSize(220, 300))
         self.assertEqual(geom.top(), 100)
-        self.assertEqual(geom.height(), start.height() + 100)
-        self.assertEqual(geom.width(), start.width())
+        self.assertGreater(geom.height(), start.height())
+        self._assert_aspect_locked(geom)
 
     def test_top_edge_keeps_bottom_anchored(self):
         start = QRect(100, 100, 400, 800)
         geom = DetachedPreviewWindow._manual_geometry(
-            "resize-top", 0, -100, start, 0.5, QSize(220, 300),
-            aspect_lock=False)
+            "resize-top", 0, -100, start, 0.5, QSize(220, 300))
         self.assertEqual(geom.bottom(), start.bottom())
-        self.assertEqual(geom.height(), start.height() + 100)
-        self.assertEqual(geom.width(), start.width())
+        self.assertGreater(geom.height(), start.height())
+        self._assert_aspect_locked(geom)
 
     def test_corner_keeps_aspect_locked(self):
         start = QRect(100, 100, 400, 800)
         geom = DetachedPreviewWindow._manual_geometry(
             "resize-bottom-right", 80, 160, start, 0.5, QSize(220, 300))
-        margin = 10
-        screen_w = geom.width() - 2 * margin
-        nav_h = max(36, min(56, round(0.09 * screen_w)))
-        screen_h = geom.height() - nav_h - 2 * margin
-        self.assertAlmostEqual(screen_w / screen_h, 0.5, delta=0.02)
+        self._assert_aspect_locked(geom)
 
     def test_resize_never_goes_below_the_minimum(self):
         start = QRect(100, 100, 400, 800)
@@ -227,20 +226,7 @@ class TestDragState(unittest.TestCase):
         win._begin_manual("resize", "resize-right", self._event())
         win._end_manual()
         self.assertIsNone(win._manual_mode)
-        self.assertIsNone(win._resize_start_screen)
         self.assertIsNone(win.mouseGrabber())
-
-    def test_resize_finished_reports_old_and_new_screen_sizes(self):
-        win = self._window()
-        seen = []
-        win.resize_finished.connect(lambda *a: seen.append(a))
-        win._begin_manual("resize", "resize-right", self._event())
-        win.resize(340, 700)
-        win._end_manual(emit_resize=True)
-        self.assertEqual(len(seen), 1)
-        old_w, old_h, new_w, new_h = seen[0]
-        self.assertGreater(new_w, old_w)
-        self.assertGreater(new_h, 0)
 
 
 class TestRoundedScreen(unittest.TestCase):

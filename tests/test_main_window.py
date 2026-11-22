@@ -349,8 +349,8 @@ class TestMainWindow(unittest.TestCase):
         self.assertTrue(self.win._logcat_visible())
 
 
-class TestPreviewReflow(unittest.TestCase):
-    """Stretching the preview rescales the Android guest, not the pixels."""
+class TestPreviewPresets(unittest.TestCase):
+    """Explicit device presets change resolution once, with a smooth resize."""
 
     @classmethod
     def setUpClass(cls):
@@ -368,11 +368,11 @@ class TestPreviewReflow(unittest.TestCase):
             pass
         self.win.deleteLater()
 
-    def _run(self):
+    def _run(self, width, height, current=(720, 1440)):
         win = self.win
         with mock.patch.object(win, "_target_ready", return_value=True), \
                 mock.patch.object(win._adb, "get_screen_size",
-                                  return_value=(720, 1440)), \
+                                  return_value=current), \
                 mock.patch.object(win._adb, "set_screen_size",
                                   return_value=(True, "ok")) as set_size, \
                 mock.patch.object(win, "_stop_screen_stream"), \
@@ -380,30 +380,22 @@ class TestPreviewReflow(unittest.TestCase):
                 mock.patch.object(win, "_run_adb",
                                   side_effect=lambda fn, on_done=None:
                                   on_done(*fn())):
-            win._apply_preview_reflow()
+            win._request_guest_resize(width, height)
         return set_size, start
 
-    def test_width_stretch_scales_guest_width_only(self):
-        self.win._pending_reflow = (400, 800, 600, 800)
-        set_size, start = self._run()
-        set_size.assert_called_once_with(1080, 1440)
+    def test_preset_changes_resolution_and_restarts_stream(self):
+        set_size, start = self._run(1080, 2400)
+        set_size.assert_called_once_with(1080, 2400)
         start.assert_called_once()
         self.assertFalse(self.win._reflowing)
 
-    def test_diagonal_stretch_scales_both_dimensions(self):
-        self.win._pending_reflow = (400, 800, 600, 1200)
-        set_size, _ = self._run()
-        set_size.assert_called_once_with(1080, 2160)
-
-    def test_no_change_does_not_restart_the_stream(self):
-        self.win._pending_reflow = (400, 800, 400, 800)
-        set_size, start = self._run()
+    def test_same_preset_does_not_restart_the_stream(self):
+        set_size, start = self._run(720, 1440, current=(720, 1440))
         set_size.assert_not_called()
         start.assert_not_called()
 
     def test_current_app_is_relaunched_after_resize(self):
         self.win._current_package = "com.example.app"
-        self.win._pending_reflow = (400, 800, 600, 800)
         with mock.patch.object(self.win, "_target_ready", return_value=True), \
                 mock.patch.object(self.win._adb, "get_screen_size",
                                   return_value=(720, 1440)), \
@@ -417,9 +409,20 @@ class TestPreviewReflow(unittest.TestCase):
                 mock.patch.object(self.win, "_run_adb",
                                   side_effect=lambda fn, on_done=None:
                                   on_done(*fn())):
-            self.win._apply_preview_reflow()
+            self.win._request_guest_resize(1200, 1920)
         stop.assert_called_once_with("com.example.app")
         shell.assert_called_once()
+
+    def test_preset_animates_window_to_the_preset_aspect(self):
+        self.win._open_detached_preview()
+        with mock.patch.object(self.win, "_target_ready", return_value=True), \
+                mock.patch.object(self.win, "_animate_preview_geometry") as anim, \
+                mock.patch.object(self.win, "_request_guest_resize") as resize:
+            self.win._on_preview_preset(1200, 1920)
+        target = anim.call_args[0][0]
+        self.assertAlmostEqual(target.width() / float(target.height()),
+                               1200 / 1920.0, delta=0.12)
+        resize.assert_called_once_with(1200, 1920)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ AppStation drops an APK onto a virtual Android phone running on the same compute
   - Two-finger upward burst opens the Android app drawer.
   - Two-finger up/down/left/right scroll smoothly at the cursor.
   - Scrolling is a single held touch gesture, so it stays proportional with no synthetic fling.
+  - Right-click the preview (or use the ⛶ button under it) to flip gesture direction if your trackpad reports the opposite way.
+- **Preview size presets** — DevTools-style sizes (Compact 540×1200, Phone 720×1600, Large 1080×2400, Tablet 1200×1920). Selecting one smoothly resizes the window and reflows the Android resolution once. Dragging a window edge only scales the preview with the aspect locked.
 - **Responsive UI** — the window adapts from small laptops to large displays.
 - **Device presets** — phone, tablet, and foldable sizes with rotation.
 - **Android version replacement** — swap the guest image without rebuilding the AVD manually.
@@ -61,8 +63,8 @@ Download the installer for your platform from the latest release:
 |----------|-------|
 | macOS Intel | `AppStation-macos-intel.dmg` |
 | macOS Apple Silicon | `AppStation-macos-arm64.dmg` |
-| macOS PKG | `AppStation-1.0.6.pkg` |
-| Windows | `AppStation-Setup-1.0.6.exe` |
+| macOS PKG | `AppStation-1.0.7.pkg` |
+| Windows | `AppStation-Setup-1.0.7.exe` |
 | Windows portable | `AppStation-windows-portable.zip` |
 
 On macOS, if Gatekeeper blocks the first launch, right-click the app and choose **Open**.
@@ -81,7 +83,7 @@ python -m pip install pyinstaller
 ```bash
 pyinstaller --clean --noconfirm AppStation.spec
 hdiutil create -volname "AppStation" \
-  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.6.dmg
+  -srcfolder dist/AppStation.app -ov -format UDZO AppStation-1.0.7.dmg
 ```
 
 **Windows**
